@@ -1,0 +1,156 @@
+package sync
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/portico/backend/internal/connectors"
+	"github.com/portico/backend/internal/models"
+	"golang.org/x/sync/errgroup"
+	"gorm.io/gorm"
+)
+
+type Orchestrator struct {
+	db       *gorm.DB
+	registry *connectors.Registry
+}
+
+func NewOrchestrator(db *gorm.DB, registry *connectors.Registry) *Orchestrator {
+	return &Orchestrator{db: db, registry: registry}
+}
+
+func (o *Orchestrator) Run(ctx context.Context, jobID uint) (*models.SyncLog, error) {
+	started := time.Now()
+	logEntry := models.SyncLog{
+		SyncJobID: jobID,
+		Status:    models.SyncLogStatusRunning,
+		StartedAt: started,
+		Message:   "sync started",
+	}
+	if err := o.db.Create(&logEntry).Error; err != nil {
+		return nil, err
+	}
+
+	rowsTotal, rowsSynced, runErr := o.execute(ctx, jobID)
+	finished := time.Now()
+	duration := finished.Sub(started).Milliseconds()
+	logEntry.FinishedAt = &finished
+	logEntry.DurationMs = &duration
+	logEntry.RowsTotal = &rowsTotal
+	logEntry.RowsSynced = &rowsSynced
+
+	if runErr != nil {
+		logEntry.Status = models.SyncLogStatusFailed
+		logEntry.Message = runErr.Error()
+	} else {
+		logEntry.Status = models.SyncLogStatusSuccess
+		logEntry.Message = fmt.Sprintf("synced %d of %d rows", rowsSynced, rowsTotal)
+	}
+
+	if err := o.db.Save(&logEntry).Error; err != nil {
+		return &logEntry, err
+	}
+	return &logEntry, runErr
+}
+
+func (o *Orchestrator) execute(ctx context.Context, jobID uint) (rowsTotal, rowsSynced int64, err error) {
+	var job models.SyncJob
+	if err := o.db.
+		Preload("SourceConnection").
+		Preload("DestinationConnection").
+		Preload("Relations").
+		Preload("Fields").
+		First(&job, jobID).Error; err != nil {
+		return 0, 0, fmt.Errorf("load sync job: %w", err)
+	}
+	if job.SourceConnection == nil || job.DestinationConnection == nil {
+		return 0, 0, fmt.Errorf("source or destination connection missing")
+	}
+
+	src, err := o.registry.NewSource(job.SourceConnection)
+	if err != nil {
+		return 0, 0, err
+	}
+	dst, err := o.registry.NewDestination(job.DestinationConnection)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if err := src.Open(ctx); err != nil {
+		return 0, 0, fmt.Errorf("open source: %w", err)
+	}
+	defer src.Close()
+
+	if err := dst.Open(ctx); err != nil {
+		return 0, 0, fmt.Errorf("open destination: %w", err)
+	}
+	defer dst.Close()
+
+	schema, err := src.Schema(ctx, job.SourceTable)
+	if err != nil {
+		return 0, 0, fmt.Errorf("introspect schema: %w", err)
+	}
+	outSchema := SchemaWithFields(SchemaWithRelations(schema, job.Relations), job.Fields)
+	if err := dst.Prepare(ctx, job.DestinationTable, outSchema, json.RawMessage(job.Config)); err != nil {
+		return 0, 0, fmt.Errorf("prepare destination: %w", err)
+	}
+
+	chunkSize := job.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = 500
+	}
+	parallel := job.ParallelCount
+	if parallel <= 0 {
+		parallel = 1
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(parallel)
+
+	var totalRows atomic.Int64
+	var syncedRows atomic.Int64
+	var rowIndex atomic.Int64
+
+	err = src.ReadChunks(gctx, job.SourceTable, chunkSize, func(docs []map[string]any) error {
+		if err := gctx.Err(); err != nil {
+			return err
+		}
+		batch := make([]map[string]any, len(docs))
+		for i, doc := range docs {
+			copied := make(map[string]any, len(doc))
+			for k, v := range doc {
+				copied[k] = v
+			}
+			batch[i] = copied
+		}
+		if err := enrichDocs(gctx, src, &job, schema, batch); err != nil {
+			return err
+		}
+		totalRows.Add(int64(len(batch)))
+		start := rowIndex.Add(int64(len(batch))) - int64(len(batch))
+
+		g.Go(func() error {
+			connectors.EnsureID(batch, schema, start)
+			ApplyFields(batch, job.Fields)
+			if err := dst.WriteBatch(gctx, job.DestinationTable, batch); err != nil {
+				return err
+			}
+			syncedRows.Add(int64(len(batch)))
+			return nil
+		})
+		return nil
+	})
+	waitErr := g.Wait()
+	rowsTotal = totalRows.Load()
+	rowsSynced = syncedRows.Load()
+	if waitErr != nil {
+		return rowsTotal, rowsSynced, waitErr
+	}
+	if err != nil {
+		return rowsTotal, rowsSynced, err
+	}
+	return rowsTotal, rowsSynced, nil
+}

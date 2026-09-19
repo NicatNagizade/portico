@@ -1,0 +1,16 @@
+.DS_Store
+.env
+*.local
+
+# Backend
+backend/*.exe
+backend/*.test
+backend/bin/
+backend/coverage.out
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/logs/
+frontend/*.log

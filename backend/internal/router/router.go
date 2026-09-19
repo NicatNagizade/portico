@@ -1,0 +1,42 @@
+package router
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/portico/backend/internal/handlers"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+
+	_ "github.com/portico/backend/docs"
+)
+
+func New(h *handlers.Handlers) *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Logger(), gin.Recovery())
+
+	r.GET("/health", h.Health)
+
+	r.GET("/connections", h.ListConnections)
+	r.POST("/connections", h.CreateConnection)
+	r.GET("/connections/:id", h.GetConnection)
+	r.PUT("/connections/:id", h.UpdateConnection)
+	r.DELETE("/connections/:id", h.DeleteConnection)
+
+	r.GET("/sync-jobs", h.ListSyncJobs)
+	r.POST("/sync-jobs", h.CreateSyncJob)
+	r.GET("/sync-jobs/:id", h.GetSyncJob)
+	r.PUT("/sync-jobs/:id", h.UpdateSyncJob)
+	r.DELETE("/sync-jobs/:id", h.DeleteSyncJob)
+	r.POST("/sync-jobs/:id/run", h.RunSyncJob)
+
+	r.GET("/sync-logs", h.ListSyncLogs)
+	r.GET("/sync-logs/:id", h.GetSyncLog)
+
+	r.GET("/api/documentation", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/api/documentation/index.html")
+	})
+	r.GET("/api/documentation/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	return r
+}
