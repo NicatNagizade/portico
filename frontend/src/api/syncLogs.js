@@ -19,5 +19,9 @@ export function listSyncLogs({ syncJobId, page = 1, pageSize = 20 } = {}) {
 }
 
 export function getSyncLog(id) {
-  return request(`/sync-logs/${id}`)
+  return request(`/sync-logs/${id}`, { cache: 'no-store' })
+}
+
+export function stopSyncLog(id) {
+  return request(`/sync-logs/${id}/stop`, { method: 'POST' })
 }

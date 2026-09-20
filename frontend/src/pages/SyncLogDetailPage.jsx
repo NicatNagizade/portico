@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { getSyncLog } from '../api/syncLogs'
+import { getSyncLog, stopSyncLog } from '../api/syncLogs'
 import StatusBadge from '../components/StatusBadge'
 import SyncProgress from '../components/SyncProgress'
 import {
+  DangerButton,
   ErrorBanner,
   LoadingState,
   MetaChip,
@@ -12,30 +13,57 @@ import {
   SecondaryButton,
 } from '../components/ui'
 import { formatDate, formatDuration } from '../lib/destinationTypes'
+import { isSyncLogRunning } from '../lib/syncLogStatus'
+
+const POLL_MS = 750
 
 export default function SyncLogDetailPage() {
   const { id } = useParams()
   const [log, setLog] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [stopping, setStopping] = useState(false)
 
   useEffect(() => {
     let active = true
-    setLoading(true)
-    getSyncLog(id)
-      .then((data) => {
-        if (active) setLog(data)
-      })
-      .catch((err) => {
+    let timer = null
+
+    async function load(initial) {
+      if (initial) setLoading(true)
+      try {
+        const data = await getSyncLog(id)
+        if (!active) return
+        setLog(data)
+        setError('')
+        if (isSyncLogRunning(data.status)) {
+          timer = setTimeout(() => load(false), POLL_MS)
+        }
+      } catch (err) {
         if (active) setError(err.message || 'Failed to load sync log')
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
+      } finally {
+        if (active && initial) setLoading(false)
+      }
+    }
+
+    load(true)
     return () => {
       active = false
+      if (timer != null) clearTimeout(timer)
     }
   }, [id])
+
+  async function handleStop() {
+    setStopping(true)
+    setError('')
+    try {
+      const data = await stopSyncLog(id)
+      setLog(data)
+    } catch (err) {
+      setError(err.message || 'Failed to stop sync')
+    } finally {
+      setStopping(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -55,6 +83,8 @@ export default function SyncLogDetailPage() {
     )
   }
 
+  const running = isSyncLogRunning(log.status)
+
   return (
     <div>
       <PageHeader
@@ -72,6 +102,11 @@ export default function SyncLogDetailPage() {
             <Link to={`/sync-jobs/${log.sync_job_id}`}>
               <SecondaryButton>View job</SecondaryButton>
             </Link>
+            {running ? (
+              <DangerButton onClick={handleStop} disabled={stopping}>
+                {stopping ? 'Stopping…' : 'Stop'}
+              </DangerButton>
+            ) : null}
           </>
         }
       />

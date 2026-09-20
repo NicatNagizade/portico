@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,6 +178,84 @@ func TestConnectionsCRUD(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete: expected 204, got %d", w.Code)
+	}
+}
+
+func TestCheckConnection(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mysql", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return &mockSource{}, nil
+	})
+	r := setupRouter(t, gdb, registry)
+
+	body := map[string]any{
+		"type": "mysql",
+		"config": map[string]any{
+			"host":     "localhost",
+			"port":     3306,
+			"user":     "root",
+			"password": "secret",
+			"database": "app",
+		},
+	}
+	payload, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/connections/check", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("check: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	createPayload, _ := json.Marshal(map[string]any{
+		"name":   "mysql-src",
+		"type":   "mysql",
+		"config": body["config"],
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/connections", bytes.NewReader(createPayload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d body=%s", w.Code, w.Body.String())
+	}
+	var created models.Connection
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	editCheck, _ := json.Marshal(map[string]any{
+		"id":   created.ID,
+		"type": "mysql",
+		"config": map[string]any{
+			"host":     "localhost",
+			"port":     3306,
+			"user":     "root",
+			"password": "",
+			"database": "app",
+		},
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/connections/check", bytes.NewReader(editCheck))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("check with blank secret: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	failRegistry := connectors.NewRegistry()
+	failRegistry.RegisterSource("mysql", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return &failingSource{err: errors.New("dial refused")}, nil
+	})
+	failRouter := setupRouter(t, gdb, failRegistry)
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/connections/check", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	failRouter.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("failed check: expected 500, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -503,6 +583,30 @@ type mockSource struct {
 	rows      []map[string]any
 	schemas   map[string]*connectors.TableSchema
 	tableRows map[string][]map[string]any
+	readHold  <-chan struct{}
+	held      atomic.Bool
+}
+
+type failingSource struct {
+	err error
+}
+
+func (m *failingSource) Open(ctx context.Context) error { return m.err }
+func (m *failingSource) Close() error                   { return nil }
+func (m *failingSource) ListTables(ctx context.Context) ([]string, error) {
+	return nil, m.err
+}
+func (m *failingSource) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
+	return nil, m.err
+}
+func (m *failingSource) Count(ctx context.Context, table string) (int64, error) {
+	return 0, m.err
+}
+func (m *failingSource) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
+	return m.err
+}
+func (m *failingSource) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
+	return nil, m.err
 }
 
 func (m *mockSource) Open(ctx context.Context) error { return nil }
@@ -533,6 +637,14 @@ func (m *mockSource) Count(ctx context.Context, table string) (int64, error) {
 	return int64(len(m.rows)), nil
 }
 func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
+	if m.readHold != nil {
+		m.held.Store(true)
+		select {
+		case <-m.readHold:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	for i := 0; i < len(m.rows); i += chunkSize {
 		end := i + chunkSize
 		if end > len(m.rows) {
@@ -703,6 +815,223 @@ func TestSyncRunWithMocks(t *testing.T) {
 	}
 	if len(dst.batches) == 0 {
 		t.Fatal("expected batches to be written")
+	}
+}
+
+func TestSyncStartReturnsRunningThenCompletes(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name:   "dst",
+		Type:   "mock_dst",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "test-start",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "applicants",
+		DestinationTable:        "applicants",
+		ChunkSize:               2,
+		Workers:                 1,
+		Config:                  datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "name", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "name": "a"},
+			{"id": 2, "name": "b"},
+		},
+	}
+	dst := &mockDest{}
+
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/start", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("start: expected 202, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var started models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.Status != models.SyncLogStatusRunning {
+		t.Fatalf("expected running, got %s", started.Status)
+	}
+	if started.ID == 0 {
+		t.Fatal("expected sync log id")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	var finished models.SyncLog
+	for {
+		gw := httptest.NewRecorder()
+		greq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/sync-logs/%d", started.ID), nil)
+		r.ServeHTTP(gw, greq)
+		if gw.Code != http.StatusOK {
+			t.Fatalf("get log: expected 200, got %d body=%s", gw.Code, gw.Body.String())
+		}
+		if err := json.Unmarshal(gw.Body.Bytes(), &finished); err != nil {
+			t.Fatal(err)
+		}
+		if finished.Status != models.SyncLogStatusRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for background sync to finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if finished.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", finished.Status, finished.Message)
+	}
+	if finished.RowsSynced == nil || *finished.RowsSynced != 2 {
+		t.Fatalf("expected rows_synced=2, got %+v", finished.RowsSynced)
+	}
+}
+
+func TestSyncStopCancelsRunningJob(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name:   "dst",
+		Type:   "mock_dst",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "test-stop",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "applicants",
+		DestinationTable:        "applicants",
+		ChunkSize:               1,
+		Workers:                 1,
+		Config:                  datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	gate := make(chan struct{})
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "name", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "name": "a"},
+			{"id": 2, "name": "b"},
+		},
+		readHold: gate,
+	}
+	dst := &mockDest{}
+
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/start", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("start: expected 202, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var started models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !src.held.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for sync to block")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	sw := httptest.NewRecorder()
+	sreq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-logs/%d/stop", started.ID), nil)
+	r.ServeHTTP(sw, sreq)
+	if sw.Code != http.StatusOK {
+		t.Fatalf("stop: expected 200, got %d body=%s", sw.Code, sw.Body.String())
+	}
+
+	var stopped models.SyncLog
+	if err := json.Unmarshal(sw.Body.Bytes(), &stopped); err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Status != models.SyncLogStatusStopped {
+		t.Fatalf("expected stopped, got %s (%s)", stopped.Status, stopped.Message)
+	}
+
+	close(gate)
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		var current models.SyncLog
+		if err := gdb.First(&current, started.ID).Error; err == nil && current.FinishedAt != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for stopped sync to settle")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cw := httptest.NewRecorder()
+	creq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-logs/%d/stop", started.ID), nil)
+	r.ServeHTTP(cw, creq)
+	if cw.Code != http.StatusConflict {
+		t.Fatalf("stop again: expected 409, got %d body=%s", cw.Code, cw.Body.String())
 	}
 }
 

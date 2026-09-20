@@ -32,3 +32,7 @@ export function deleteSyncJob(id) {
 export function runSyncJob(id) {
   return request(`/sync-jobs/${id}/run`, { method: 'POST' })
 }
+
+export function startSyncJob(id) {
+  return request(`/sync-jobs/${id}/start`, { method: 'POST' })
+}

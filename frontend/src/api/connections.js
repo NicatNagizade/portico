@@ -28,3 +28,7 @@ export function listConnectionColumns(id, table) {
   const query = new URLSearchParams({ table })
   return request(`/connections/${id}/columns?${query}`).then((data) => data?.columns || [])
 }
+
+export function checkConnection(input) {
+  return request('/connections/check', { method: 'POST', body: input })
+}

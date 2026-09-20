@@ -88,6 +88,27 @@ func (r *Registry) NewDestination(conn *models.Connection) (DestinationWriter, e
 	return factory(conn)
 }
 
+// Check opens the matching source or destination connector and closes it.
+func (r *Registry) Check(ctx context.Context, conn *models.Connection) error {
+	if _, ok := r.sources[conn.Type]; ok {
+		src, err := r.NewSource(conn)
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+		return src.Open(ctx)
+	}
+	if _, ok := r.destinations[conn.Type]; ok {
+		dst, err := r.NewDestination(conn)
+		if err != nil {
+			return err
+		}
+		defer dst.Close()
+		return dst.Open(ctx)
+	}
+	return fmt.Errorf("no connector registered for type %q", conn.Type)
+}
+
 // EnsureID sets document id as a string from existing id, primary key, or row index.
 func EnsureID(docs []map[string]any, schema *TableSchema, startIndex int64) {
 	var pkCols []string

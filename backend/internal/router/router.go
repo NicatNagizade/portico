@@ -21,6 +21,7 @@ func New(h *handlers.Handlers) *gin.Engine {
 
 	r.GET("/connections", h.ListConnections)
 	r.POST("/connections", h.CreateConnection)
+	r.POST("/connections/check", h.CheckConnection)
 	r.GET("/connections/:id", h.GetConnection)
 	r.PUT("/connections/:id", h.UpdateConnection)
 	r.DELETE("/connections/:id", h.DeleteConnection)
@@ -33,9 +34,11 @@ func New(h *handlers.Handlers) *gin.Engine {
 	r.PUT("/sync-jobs/:id", h.UpdateSyncJob)
 	r.DELETE("/sync-jobs/:id", h.DeleteSyncJob)
 	r.POST("/sync-jobs/:id/run", h.RunSyncJob)
+	r.POST("/sync-jobs/:id/start", h.StartSyncJob)
 
 	r.GET("/sync-logs", h.ListSyncLogs)
 	r.GET("/sync-logs/:id", h.GetSyncLog)
+	r.POST("/sync-logs/:id/stop", h.StopSyncLog)
 
 	r.GET("/api/documentation", func(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/api/documentation/index.html")

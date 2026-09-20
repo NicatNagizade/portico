@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { deleteSyncJob, listSyncJobs, runSyncJob } from '../api/syncJobs'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { deleteSyncJob, listSyncJobs, startSyncJob } from '../api/syncJobs'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
   EmptyState,
@@ -12,7 +12,6 @@ import {
   PageHeader,
   Pagination,
   PrimaryButton,
-  SuccessBanner,
   TableShell,
   Td,
   Th,
@@ -110,6 +109,7 @@ function parsePage(raw) {
 }
 
 export default function SyncJobsPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const page = parsePage(searchParams.get('page'))
   const [items, setItems] = useState([])
@@ -120,7 +120,6 @@ export default function SyncJobsPage() {
   const [pendingDelete, setPendingDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [runningId, setRunningId] = useState(null)
-  const [runMessage, setRunMessage] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -150,14 +149,12 @@ export default function SyncJobsPage() {
 
   async function handleRun(job) {
     setRunningId(job.id)
-    setRunMessage('')
     setError('')
     try {
-      const log = await runSyncJob(job.id)
-      setRunMessage(`Sync finished with status “${log.status}” (log #${log.id}).`)
+      const log = await startSyncJob(job.id)
+      navigate(`/sync-logs/${log.id}`)
     } catch (err) {
-      setError(err.message || 'Failed to run sync job')
-    } finally {
+      setError(err.message || 'Failed to start sync job')
       setRunningId(null)
     }
   }
@@ -193,7 +190,6 @@ export default function SyncJobsPage() {
       />
 
       <ErrorBanner message={error} />
-      <SuccessBanner message={runMessage} />
 
       {loading && items.length === 0 ? (
         <LoadingState />

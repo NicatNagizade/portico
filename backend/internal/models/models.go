@@ -19,6 +19,7 @@ const (
 	SyncLogStatusRunning = "running"
 	SyncLogStatusSuccess = "success"
 	SyncLogStatusFailed  = "failed"
+	SyncLogStatusStopped = "stopped"
 
 	RelationTypeBelongsToMany = "belongs_to_many"
 	RelationTypeHasMany       = "has_many"

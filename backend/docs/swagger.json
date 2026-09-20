@@ -79,6 +79,61 @@
                 }
             }
         },
+        "/connections/check": {
+            "post": {
+                "description": "Opens the source or destination connector with the given config without saving. Pass id when editing so blank secrets keep the stored values.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connections"
+                ],
+                "summary": "Check connection credentials",
+                "parameters": [
+                    {
+                        "description": "Connection check",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/connection.CheckInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/connections/{id}": {
             "get": {
                 "produces": [
@@ -552,6 +607,7 @@
         },
         "/sync-jobs/{id}/run": {
             "post": {
+                "description": "Runs the sync synchronously and returns the finished sync log.",
                 "produces": [
                     "application/json"
                 ],
@@ -571,6 +627,47 @@
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.SyncLog"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sync-jobs/{id}/start": {
+            "post": {
+                "description": "Creates a sync log with status running and returns it immediately. Poll GET /sync-logs/{id} for progress (rows_synced / rows_total) and final status.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync-jobs"
+                ],
+                "summary": "Start a sync job in the background",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
                             "$ref": "#/definitions/models.SyncLog"
                         }
@@ -686,9 +783,74 @@
                     }
                 }
             }
+        },
+        "/sync-logs/{id}/stop": {
+            "post": {
+                "description": "Cancels a background sync and sets the log status to stopped.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync-logs"
+                ],
+                "summary": "Stop a running sync log",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync log ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.SyncLog"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "connection.CheckInput": {
+            "type": "object",
+            "required": [
+                "config",
+                "type"
+            ],
+            "properties": {
+                "config": {
+                    "type": "object"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "connection.CreateInput": {
             "type": "object",
             "required": [

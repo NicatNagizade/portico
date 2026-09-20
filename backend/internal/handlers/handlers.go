@@ -195,6 +195,36 @@ func (h *Handlers) UpdateConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
+// CheckConnection godoc
+// @Summary Check connection credentials
+// @Description Opens the source or destination connector with the given config without saving. Pass id when editing so blank secrets keep the stored values.
+// @Tags connections
+// @Accept json
+// @Produce json
+// @Param body body connection.CheckInput true "Connection check"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /connections/check [post]
+func (h *Handlers) CheckConnection(c *gin.Context) {
+	var in connection.CheckInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	conn, err := h.Connections.PrepareCheck(in)
+	if err != nil {
+		writeErr(c, err, connection.ErrNotFound)
+		return
+	}
+	if err := h.Registry.Check(c.Request.Context(), conn); err != nil {
+		writeErr(c, err, nil)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // DeleteConnection godoc
 // @Summary Delete connection
 // @Tags connections
@@ -419,6 +449,7 @@ func (h *Handlers) DeleteSyncJob(c *gin.Context) {
 
 // RunSyncJob godoc
 // @Summary Run a sync job
+// @Description Runs the sync synchronously and returns the finished sync log.
 // @Tags sync-jobs
 // @Produce json
 // @Param id path int true "Sync job ID"
@@ -445,6 +476,33 @@ func (h *Handlers) RunSyncJob(c *gin.Context) {
 		status = http.StatusInternalServerError
 	}
 	c.JSON(status, logEntry)
+}
+
+// StartSyncJob godoc
+// @Summary Start a sync job in the background
+// @Description Creates a sync log with status running and returns it immediately. Poll GET /sync-logs/{id} for progress (rows_synced / rows_total) and final status.
+// @Tags sync-jobs
+// @Produce json
+// @Param id path int true "Sync job ID"
+// @Success 202 {object} models.SyncLog
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /sync-jobs/{id}/start [post]
+func (h *Handlers) StartSyncJob(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	if _, err := h.SyncJobs.Get(id); err != nil {
+		writeErr(c, err, syncjob.ErrNotFound)
+		return
+	}
+	logEntry, err := h.Sync.Start(id)
+	if err != nil {
+		writeErr(c, err, nil)
+		return
+	}
+	c.JSON(http.StatusAccepted, logEntry)
 }
 
 // ListSyncLogs godoc
@@ -495,6 +553,38 @@ func (h *Handlers) GetSyncLog(c *gin.Context) {
 	item, err := h.SyncLogs.Get(id)
 	if err != nil {
 		writeErr(c, err, synclog.ErrNotFound)
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
+// StopSyncLog godoc
+// @Summary Stop a running sync log
+// @Description Cancels a background sync and sets the log status to stopped.
+// @Tags sync-logs
+// @Produce json
+// @Param id path int true "Sync log ID"
+// @Success 200 {object} models.SyncLog
+// @Failure 404 {object} ErrorResponse
+// @Failure 409 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /sync-logs/{id}/stop [post]
+func (h *Handlers) StopSyncLog(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	if _, err := h.SyncLogs.Get(id); err != nil {
+		writeErr(c, err, synclog.ErrNotFound)
+		return
+	}
+	item, err := h.Sync.Stop(id)
+	if err != nil {
+		if errors.Is(err, sync.ErrNotRunning) {
+			c.JSON(http.StatusConflict, ErrorResponse{Error: err.Error()})
+			return
+		}
+		writeErr(c, err, nil)
 		return
 	}
 	c.JSON(http.StatusOK, item)
