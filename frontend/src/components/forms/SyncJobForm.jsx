@@ -259,19 +259,25 @@ export default function SyncJobForm({
         </div>
       </div>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <div className="mb-4 flex items-center gap-2">
+      <details className="group rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 open:pb-4">
+        <summary className="flex cursor-pointer list-none items-center gap-2 p-4 [&::-webkit-details-marker]:hidden">
           <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
             02
           </span>
-          <div>
+          <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-[var(--text)]">Destination config</h3>
             <p className="text-xs text-[var(--text-muted)]">
-              Typesense-oriented options. Leave blank to keep connector defaults.
+              Optional Typesense options — expand only if you need them.
             </p>
           </div>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
+          <span className="font-mono text-[11px] text-[var(--text-muted)] group-open:hidden">
+            show
+          </span>
+          <span className="hidden font-mono text-[11px] text-[var(--text-muted)] group-open:inline">
+            hide
+          </span>
+        </summary>
+        <div className="grid gap-4 border-t border-[var(--border)] px-4 pt-4 sm:grid-cols-2">
           <Field label="Default sorting field">
             <AutocompleteInput
               options={sourceColumns}
@@ -312,7 +318,7 @@ export default function SyncJobForm({
             Enable nested fields
           </label>
         </div>
-      </div>
+      </details>
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
         <FieldEditor

@@ -58,7 +58,7 @@ export default function SyncJobFormPage() {
       <PageHeader
         eyebrow="Sync jobs"
         title={isEdit ? 'Edit sync job' : 'New sync job'}
-        description="Configure tables, field overrides, relations, and destination options."
+        description="Map source → destination, then add field overrides and relations as needed."
         actions={
           <Link to={isEdit ? `/sync-jobs/${id}` : '/sync-jobs'}>
             <SecondaryButton>Back</SecondaryButton>
