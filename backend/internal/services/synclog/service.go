@@ -17,16 +17,24 @@ func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
 
-func (s *Service) List(syncJobID *uint) ([]models.SyncLog, error) {
-	q := s.db.Order("id desc")
+func (s *Service) List(syncJobID *uint, page, pageSize int) ([]models.SyncLog, int64, error) {
+	q := s.db.Model(&models.SyncLog{})
 	if syncJobID != nil {
 		q = q.Where("sync_job_id = ?", *syncJobID)
 	}
-	var items []models.SyncLog
-	if err := q.Find(&items).Error; err != nil {
-		return nil, err
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
 	}
-	return items, nil
+	var items []models.SyncLog
+	if err := q.Preload("SyncJob").
+		Order("id desc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 func (s *Service) Get(id uint) (*models.SyncLog, error) {

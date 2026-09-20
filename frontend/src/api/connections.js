@@ -19,3 +19,12 @@ export function updateConnection(id, input) {
 export function deleteConnection(id) {
   return request(`/connections/${id}`, { method: 'DELETE' })
 }
+
+export function listConnectionTables(id) {
+  return request(`/connections/${id}/tables`).then((data) => data?.tables || [])
+}
+
+export function listConnectionColumns(id, table) {
+  const query = new URLSearchParams({ table })
+  return request(`/connections/${id}/columns?${query}`).then((data) => data?.columns || [])
+}

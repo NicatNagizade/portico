@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { deleteSyncJob, listSyncJobs, runSyncJob } from '../api/syncJobs'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
@@ -7,23 +7,20 @@ import {
   ErrorBanner,
   IconButton,
   iconButtonClass,
-  ListRow,
-  ListStack,
   LoadingState,
   MetaChip,
   PageHeader,
+  Pagination,
   PrimaryButton,
   SuccessBanner,
+  TableShell,
+  Td,
+  Th,
+  tableClassName,
 } from '../components/ui'
 import { formatDate } from '../lib/destinationTypes'
 
-function Arrow() {
-  return (
-    <span className="mx-1 inline-flex text-[var(--text-muted)]" aria-hidden="true">
-      →
-    </span>
-  )
-}
+const PAGE_SIZE = 20
 
 function Icon({ children }) {
   return (
@@ -107,8 +104,17 @@ function DeleteIcon() {
   )
 }
 
+function parsePage(raw) {
+  const n = Number.parseInt(raw || '1', 10)
+  return Number.isFinite(n) && n > 0 ? n : 1
+}
+
 export default function SyncJobsPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const page = parsePage(searchParams.get('page'))
   const [items, setItems] = useState([])
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [pendingDelete, setPendingDelete] = useState(null)
@@ -116,22 +122,31 @@ export default function SyncJobsPage() {
   const [runningId, setRunningId] = useState(null)
   const [runMessage, setRunMessage] = useState('')
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const data = await listSyncJobs()
-      setItems(data || [])
+      const data = await listSyncJobs({ page, pageSize: PAGE_SIZE })
+      setItems(data?.items || [])
+      setTotal(data?.total ?? 0)
+      setTotalPages(data?.total_pages ?? 0)
+      if (data?.total_pages > 0 && page > data.total_pages) {
+        setSearchParams({ page: String(data.total_pages) }, { replace: true })
+      }
     } catch (err) {
       setError(err.message || 'Failed to load sync jobs')
     } finally {
       setLoading(false)
     }
-  }
+  }, [page, setSearchParams])
 
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
+
+  function setPage(next) {
+    setSearchParams(next > 1 ? { page: String(next) } : {})
+  }
 
   async function handleRun(job) {
     setRunningId(job.id)
@@ -180,9 +195,9 @@ export default function SyncJobsPage() {
       <ErrorBanner message={error} />
       <SuccessBanner message={runMessage} />
 
-      {loading ? (
+      {loading && items.length === 0 ? (
         <LoadingState />
-      ) : items.length === 0 ? (
+      ) : !loading && items.length === 0 ? (
         <EmptyState
           title="No sync jobs yet"
           message="Create a job after you have at least one source and one destination connection."
@@ -193,78 +208,115 @@ export default function SyncJobsPage() {
           }
         />
       ) : (
-        <ListStack>
-          {items.map((item, index) => (
-            <ListRow key={item.id} className={`stagger-${Math.min(index + 1, 5)}`}>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link
-                    to={`/sync-jobs/${item.id}`}
-                    className="text-base font-semibold text-[var(--text)] transition-colors hover:text-[var(--accent)]"
-                  >
-                    {item.name}
-                  </Link>
-                  <MetaChip>#{item.id}</MetaChip>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-sm text-[var(--text-muted)]">
-                  <span className="font-medium text-[var(--text)]">
-                    {item.source_connection?.name || `#${item.source_connection_id}`}
-                  </span>
-                  <span className="font-mono text-xs">/{item.source_table}</span>
-                  <Arrow />
-                  <span className="font-medium text-[var(--text)]">
-                    {item.destination_connection?.name || `#${item.destination_connection_id}`}
-                  </span>
-                  <span className="font-mono text-xs">/{item.destination_table}</span>
-                </div>
-                <p className="mt-2 text-xs text-[var(--text-muted)]">
-                  Updated {formatDate(item.updated_at)}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-px self-start rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-0.5 sm:self-center">
-                <Link
-                  to={`/sync-jobs/${item.id}`}
-                  title="Open"
-                  aria-label={`Open ${item.name}`}
-                  className={iconButtonClass()}
-                >
-                  <OpenIcon />
-                </Link>
-                <Link
-                  to={`/sync-jobs/${item.id}/edit`}
-                  title="Edit"
-                  aria-label={`Edit ${item.name}`}
-                  className={iconButtonClass()}
-                >
-                  <EditIcon />
-                </Link>
-                <IconButton
-                  label={runningId === item.id ? 'Running' : 'Run'}
-                  tone="accent"
-                  onClick={() => handleRun(item)}
-                  disabled={runningId === item.id}
-                >
-                  {runningId === item.id ? <SpinnerIcon /> : <PlayIcon />}
-                </IconButton>
-                <Link
-                  to={`/sync-logs?sync_job_id=${item.id}`}
-                  title="Logs"
-                  aria-label={`Logs for ${item.name}`}
-                  className={iconButtonClass()}
-                >
-                  <LogsIcon />
-                </Link>
-                <IconButton
-                  label="Delete"
-                  tone="danger"
-                  onClick={() => setPendingDelete(item)}
-                >
-                  <DeleteIcon />
-                </IconButton>
-              </div>
-            </ListRow>
-          ))}
-        </ListStack>
+        <TableShell
+          footer={
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={total}
+              pageSize={PAGE_SIZE}
+              onPageChange={setPage}
+              disabled={loading}
+            />
+          }
+        >
+          <table className={tableClassName}>
+            <thead>
+              <tr>
+                <Th>Job</Th>
+                <Th>Source</Th>
+                <Th>Destination</Th>
+                <Th>Updated</Th>
+                <Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id} className="transition-colors hover:bg-[var(--bg-elevated)]/70">
+                  <Td>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        to={`/sync-jobs/${item.id}`}
+                        className="font-semibold text-[var(--text)] transition-colors hover:text-[var(--accent)]"
+                      >
+                        {item.name}
+                      </Link>
+                      <MetaChip>#{item.id}</MetaChip>
+                    </div>
+                  </Td>
+                  <Td>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">
+                        {item.source_connection?.name || `#${item.source_connection_id}`}
+                      </p>
+                      <p className="mt-0.5 font-mono text-xs text-[var(--text-muted)]">
+                        {item.source_table}
+                      </p>
+                    </div>
+                  </Td>
+                  <Td>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">
+                        {item.destination_connection?.name || `#${item.destination_connection_id}`}
+                      </p>
+                      <p className="mt-0.5 font-mono text-xs text-[var(--text-muted)]">
+                        {item.destination_table}
+                      </p>
+                    </div>
+                  </Td>
+                  <Td>
+                    <span className="text-xs text-[var(--text-muted)] whitespace-nowrap">
+                      {formatDate(item.updated_at)}
+                    </span>
+                  </Td>
+                  <Td className="text-right">
+                    <div className="inline-flex items-center gap-px rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-0.5">
+                      <Link
+                        to={`/sync-jobs/${item.id}`}
+                        title="Open"
+                        aria-label={`Open ${item.name}`}
+                        className={iconButtonClass()}
+                      >
+                        <OpenIcon />
+                      </Link>
+                      <Link
+                        to={`/sync-jobs/${item.id}/edit`}
+                        title="Edit"
+                        aria-label={`Edit ${item.name}`}
+                        className={iconButtonClass()}
+                      >
+                        <EditIcon />
+                      </Link>
+                      <IconButton
+                        label={runningId === item.id ? 'Running' : 'Run'}
+                        tone="accent"
+                        onClick={() => handleRun(item)}
+                        disabled={runningId === item.id}
+                      >
+                        {runningId === item.id ? <SpinnerIcon /> : <PlayIcon />}
+                      </IconButton>
+                      <Link
+                        to={`/sync-logs?sync_job_id=${item.id}`}
+                        title="Logs"
+                        aria-label={`Logs for ${item.name}`}
+                        className={iconButtonClass()}
+                      >
+                        <LogsIcon />
+                      </Link>
+                      <IconButton
+                        label="Delete"
+                        tone="danger"
+                        onClick={() => setPendingDelete(item)}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </div>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableShell>
       )}
 
       <ConfirmDialog

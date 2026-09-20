@@ -1,4 +1,5 @@
 import { DESTINATION_TYPES } from '../../lib/destinationTypes'
+import AutocompleteInput from '../AutocompleteInput'
 import { GhostButton, SecondaryButton, inputClassName } from '../ui'
 
 function emptyField() {
@@ -10,7 +11,12 @@ function emptyField() {
   }
 }
 
-export default function FieldEditor({ fields, onChange }) {
+export default function FieldEditor({
+  fields,
+  onChange,
+  sourceColumns = [],
+  onNeedSourceColumns,
+}) {
   function updateRow(index, patch) {
     onChange(fields.map((row, i) => (i === index ? { ...row, ...patch } : row)))
   }
@@ -51,9 +57,10 @@ export default function FieldEditor({ fields, onChange }) {
             >
               <label className="block text-xs">
                 <span className="mb-1.5 block text-[var(--text-muted)]">Source name</span>
-                <input
-                  className={inputClassName}
+                <AutocompleteInput
+                  options={sourceColumns}
                   value={row.source_name}
+                  onFocus={onNeedSourceColumns}
                   onChange={(e) => updateRow(index, { source_name: e.target.value })}
                   required
                 />

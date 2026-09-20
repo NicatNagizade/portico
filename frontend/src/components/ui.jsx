@@ -238,12 +238,71 @@ export function MetaChip({ children }) {
 export const inputClassName =
   'w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] shadow-[var(--shadow-sm)] outline-none transition-shadow placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-soft)]'
 
-export const tableClassName = 'w-full min-w-[640px] border-collapse text-left text-sm'
+export const tableClassName = 'w-full min-w-[720px] border-collapse text-left text-sm'
 
-export function TableShell({ children }) {
+export function TableShell({ children, footer }) {
   return (
     <div className="animate-fade-up overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-md)]">
       <div className="overflow-x-auto">{children}</div>
+      {footer}
+    </div>
+  )
+}
+
+export function Th({ children, className = '' }) {
+  return (
+    <th
+      className={[
+        'border-b border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3 font-mono text-[11px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase',
+        className,
+      ].join(' ')}
+    >
+      {children}
+    </th>
+  )
+}
+
+export function Td({ children, className = '' }) {
+  return (
+    <td className={['border-b border-[var(--border)] px-4 py-3 align-middle text-[var(--text)]', className].join(' ')}>
+      {children}
+    </td>
+  )
+}
+
+export function Pagination({ page, totalPages, total, pageSize, onPageChange, disabled }) {
+  if (!total) return null
+  const from = (page - 1) * pageSize + 1
+  const to = Math.min(page * pageSize, total)
+  const canPrev = page > 1
+  const canNext = page < totalPages
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--bg-elevated)]/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs text-[var(--text-muted)]">
+        Showing <span className="font-mono text-[var(--text)]">{from}</span>
+        –<span className="font-mono text-[var(--text)]">{to}</span> of{' '}
+        <span className="font-mono text-[var(--text)]">{total}</span>
+      </p>
+      <div className="flex items-center gap-2">
+        <SecondaryButton
+          type="button"
+          disabled={disabled || !canPrev}
+          onClick={() => onPageChange(page - 1)}
+        >
+          Previous
+        </SecondaryButton>
+        <span className="min-w-[5.5rem] text-center font-mono text-xs text-[var(--text-muted)]">
+          {page} / {Math.max(totalPages, 1)}
+        </span>
+        <SecondaryButton
+          type="button"
+          disabled={disabled || !canNext}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Next
+        </SecondaryButton>
+      </div>
     </div>
   )
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +44,7 @@ func setupRouter(t *testing.T, gdb *gorm.DB, registry *connectors.Registry) *gin
 		syncjob.NewService(gdb),
 		synclog.NewService(gdb),
 		syncsvc.NewOrchestrator(gdb, registry),
+		registry,
 	)
 	return router.New(h)
 }
@@ -165,6 +167,80 @@ func TestConnectionsCRUD(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete: expected 204, got %d", w.Code)
+	}
+}
+
+func TestConnectionTablesAndColumns(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	src := &mockSource{
+		schemas: map[string]*connectors.TableSchema{
+			"users": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "email", Type: connectors.FieldTypeString},
+				},
+			},
+			"posts": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "title", Type: connectors.FieldTypeString},
+				},
+			},
+		},
+	}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	r := setupRouter(t, gdb, registry)
+
+	conn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&conn).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/connections/%d/tables", conn.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("tables: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var tablesResp struct {
+		Tables []string `json:"tables"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &tablesResp); err != nil {
+		t.Fatalf("decode tables: %v", err)
+	}
+	if len(tablesResp.Tables) != 2 {
+		t.Fatalf("expected 2 tables, got %v", tablesResp.Tables)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/connections/%d/columns?table=users", conn.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("columns: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var columnsResp struct {
+		Columns []string `json:"columns"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &columnsResp); err != nil {
+		t.Fatalf("decode columns: %v", err)
+	}
+	if len(columnsResp.Columns) != 2 || columnsResp.Columns[0] != "id" || columnsResp.Columns[1] != "email" {
+		t.Fatalf("unexpected columns: %v", columnsResp.Columns)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/connections/%d/columns", conn.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing table: expected 400, got %d", w.Code)
 	}
 }
 
@@ -330,10 +406,23 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/sync-jobs", nil)
+	req = httptest.NewRequest(http.MethodGet, "/sync-jobs?page=1&page_size=10", nil)
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("list jobs: %d", w.Code)
+	}
+	var jobPage struct {
+		Items      []models.SyncJob `json:"items"`
+		Page       int              `json:"page"`
+		PageSize   int              `json:"page_size"`
+		Total      int64            `json:"total"`
+		TotalPages int              `json:"total_pages"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &jobPage); err != nil {
+		t.Fatal(err)
+	}
+	if jobPage.Total < 1 || len(jobPage.Items) < 1 || jobPage.Page != 1 {
+		t.Fatalf("unexpected job page: %+v", jobPage)
 	}
 
 	// create a log row directly and fetch via API
@@ -355,17 +444,26 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/sync-logs?sync_job_id=%d", job.ID), nil)
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/sync-logs?sync_job_id=%d&page=1&page_size=10", job.ID), nil)
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("list logs: %d", w.Code)
 	}
-	var logs []models.SyncLog
-	if err := json.Unmarshal(w.Body.Bytes(), &logs); err != nil {
+	var logPage struct {
+		Items      []models.SyncLog `json:"items"`
+		Page       int              `json:"page"`
+		PageSize   int              `json:"page_size"`
+		Total      int64            `json:"total"`
+		TotalPages int              `json:"total_pages"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &logPage); err != nil {
 		t.Fatal(err)
 	}
-	if len(logs) != 1 || logs[0].DurationMs == nil || *logs[0].DurationMs != 42 {
-		t.Fatalf("unexpected logs: %+v", logs)
+	if logPage.Total != 1 || len(logPage.Items) != 1 || logPage.Items[0].DurationMs == nil || *logPage.Items[0].DurationMs != 42 {
+		t.Fatalf("unexpected logs: %+v", logPage)
+	}
+	if logPage.Items[0].SyncJob == nil || logPage.Items[0].SyncJob.Name == "" {
+		t.Fatalf("expected sync job preload on log list, got %+v", logPage.Items[0].SyncJob)
 	}
 
 	w = httptest.NewRecorder()
@@ -379,7 +477,15 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	req = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/sync-jobs/%d", job.ID), nil)
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
-		t.Fatalf("delete job: %d", w.Code)
+		t.Fatalf("delete job: %d body=%s", w.Code, w.Body.String())
+	}
+
+	var leftover int64
+	if err := gdb.Model(&models.SyncLog{}).Where("sync_job_id = ?", job.ID).Count(&leftover).Error; err != nil {
+		t.Fatal(err)
+	}
+	if leftover != 0 {
+		t.Fatalf("expected sync logs cascaded on job delete, got %d", leftover)
 	}
 }
 
@@ -392,6 +498,20 @@ type mockSource struct {
 
 func (m *mockSource) Open(ctx context.Context) error { return nil }
 func (m *mockSource) Close() error                   { return nil }
+func (m *mockSource) ListTables(ctx context.Context) ([]string, error) {
+	if m.schemas != nil {
+		tables := make([]string, 0, len(m.schemas))
+		for name := range m.schemas {
+			tables = append(tables, name)
+		}
+		sort.Strings(tables)
+		return tables, nil
+	}
+	if m.schema != nil {
+		return []string{"main"}, nil
+	}
+	return nil, nil
+}
 func (m *mockSource) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
 	if m.schemas != nil {
 		if s, ok := m.schemas[table]; ok {
@@ -627,6 +747,7 @@ func TestSyncRunUpdatesRowsSyncedAfterEachChunk(t *testing.T) {
 
 	var snapshots []int64
 	var totals []int64
+	var durations []*int64
 	dst := &mockDest{
 		onWrite: func([]map[string]any) {
 			var logEntry models.SyncLog
@@ -644,6 +765,7 @@ func TestSyncRunUpdatesRowsSyncedAfterEachChunk(t *testing.T) {
 			}
 			snapshots = append(snapshots, synced)
 			totals = append(totals, total)
+			durations = append(durations, logEntry.DurationMs)
 		},
 	}
 
@@ -675,6 +797,12 @@ func TestSyncRunUpdatesRowsSyncedAfterEachChunk(t *testing.T) {
 	if totals[0] != 4 || totals[1] != 4 {
 		t.Fatalf("expected rows_total=4 while chunks were writing, got %v", totals)
 	}
+	if durations[0] != nil {
+		t.Fatalf("expected duration_ms unset before the first chunk was recorded, got %v", *durations[0])
+	}
+	if durations[1] == nil {
+		t.Fatal("expected duration_ms to be set after the first chunk")
+	}
 
 	var logEntry models.SyncLog
 	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
@@ -682,6 +810,9 @@ func TestSyncRunUpdatesRowsSyncedAfterEachChunk(t *testing.T) {
 	}
 	if logEntry.RowsSynced == nil || *logEntry.RowsSynced != 4 {
 		t.Fatalf("expected final rows_synced=4, got %+v", logEntry.RowsSynced)
+	}
+	if logEntry.DurationMs == nil {
+		t.Fatal("expected final duration_ms to be set")
 	}
 }
 

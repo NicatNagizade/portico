@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "API for managing database connections and syncing data to destinations like Typesense.",
+        "description": "API for managing database connections and syncing data to destinations like Typesense. List endpoints for sync jobs and sync logs return a paginated envelope: items, page, page_size, total, total_pages.",
         "title": "Portico Sync API",
         "contact": {},
         "version": "1.0"
@@ -207,6 +207,111 @@
                 }
             }
         },
+        "/connections/{id}/columns": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connections"
+                ],
+                "summary": "List columns for a table on a source connection",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Connection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/connections/{id}/tables": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connections"
+                ],
+                "summary": "List tables for a source connection",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Connection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "produces": [
@@ -231,6 +336,7 @@
         },
         "/sync-jobs": {
             "get": {
+                "description": "Returns a paginated list of sync jobs. Default page size is 20; maximum is 100.",
                 "produces": [
                     "application/json"
                 ],
@@ -238,14 +344,30 @@
                     "sync-jobs"
                 ],
                 "summary": "List sync jobs",
+                "parameters": [
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (1-based)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page (max 100)",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.SyncJob"
-                            }
+                            "$ref": "#/definitions/handlers.SyncJobListResponse"
                         }
                     },
                     "500": {
@@ -470,6 +592,7 @@
         },
         "/sync-logs": {
             "get": {
+                "description": "Returns a paginated list of sync logs, newest first. Optionally filter by sync_job_id. Default page size is 20; maximum is 100. Each item includes the related sync job when available.",
                 "produces": [
                     "application/json"
                 ],
@@ -483,16 +606,36 @@
                         "description": "Filter by sync job ID",
                         "name": "sync_job_id",
                         "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (1-based)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page (max 100)",
+                        "name": "page_size",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.SyncLog"
-                            }
+                            "$ref": "#/definitions/handlers.SyncLogListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     },
                     "500": {
@@ -584,6 +727,60 @@
             "properties": {
                 "error": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.SyncJobListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncJob"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "total_pages": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
+        "handlers.SyncLogListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncLog"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "total_pages": {
+                    "type": "integer",
+                    "example": 5
                 }
             }
         },
@@ -716,6 +913,9 @@
                 "name": {
                     "type": "string"
                 },
+                "parent_relation": {
+                    "type": "string"
+                },
                 "pivot_table": {
                     "type": "string"
                 },
@@ -751,10 +951,10 @@
                 "message": {
                     "type": "string"
                 },
-                "rows_total": {
+                "rows_synced": {
                     "type": "integer"
                 },
-                "rows_synced": {
+                "rows_total": {
                     "type": "integer"
                 },
                 "started_at": {
@@ -857,6 +1057,9 @@
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "parent_relation": {
                     "type": "string"
                 },
                 "pivot_table": {

@@ -1,11 +1,21 @@
 import { request } from './client'
+import { normalizePage } from './pagination'
 
-export function listSyncLogs(syncJobId) {
-  const query =
-    syncJobId !== undefined && syncJobId !== null && syncJobId !== ''
-      ? `?sync_job_id=${encodeURIComponent(syncJobId)}`
-      : ''
-  return request(`/sync-logs${query}`, { cache: 'no-store' })
+function buildListQuery({ syncJobId, page, pageSize } = {}) {
+  const params = new URLSearchParams()
+  if (syncJobId !== undefined && syncJobId !== null && syncJobId !== '') {
+    params.set('sync_job_id', String(syncJobId))
+  }
+  if (page) params.set('page', String(page))
+  if (pageSize) params.set('page_size', String(pageSize))
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export function listSyncLogs({ syncJobId, page = 1, pageSize = 20 } = {}) {
+  return request(`/sync-logs${buildListQuery({ syncJobId, page, pageSize })}`, {
+    cache: 'no-store',
+  }).then(normalizePage)
 }
 
 export function getSyncLog(id) {

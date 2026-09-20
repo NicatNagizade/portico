@@ -32,6 +32,7 @@ type TableSchema struct {
 
 type SourceReader interface {
 	Open(ctx context.Context) error
+	ListTables(ctx context.Context) ([]string, error)
 	Schema(ctx context.Context, table string) (*TableSchema, error)
 	Count(ctx context.Context, table string) (int64, error)
 	ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error

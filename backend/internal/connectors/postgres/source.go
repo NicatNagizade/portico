@@ -67,6 +67,28 @@ func (s *Source) Close() error {
 	return s.db.Close()
 }
 
+func (s *Source) ListTables(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT table_name
+		FROM information_schema.tables
+		WHERE table_schema = $1 AND table_type = 'BASE TABLE'
+		ORDER BY table_name`, s.cfg.Schema)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
+}
+
 func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
 	// DISTINCT ON avoids duplicate columns when a column participates in multiple constraints.
 	rows, err := s.db.QueryContext(ctx, `

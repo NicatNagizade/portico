@@ -59,6 +59,28 @@ func (s *Source) Close() error {
 	return s.db.Close()
 }
 
+func (s *Source) ListTables(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT TABLE_NAME
+		FROM information_schema.TABLES
+		WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
+		ORDER BY TABLE_NAME`, s.cfg.Database)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
+}
+
 func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY

@@ -7,15 +7,20 @@ import {
   EmptyState,
   ErrorBanner,
   Field,
-  ListRow,
-  ListStack,
   LoadingState,
   MetaChip,
   PageHeader,
+  Pagination,
   SecondaryButton,
+  TableShell,
+  Td,
+  Th,
   inputClassName,
+  tableClassName,
 } from '../components/ui'
 import { formatDate, formatDuration } from '../lib/destinationTypes'
+
+const PAGE_SIZE = 20
 
 function RefreshIcon({ spinning }) {
   return (
@@ -44,10 +49,25 @@ function RefreshIcon({ spinning }) {
   )
 }
 
+function parsePage(raw) {
+  const n = Number.parseInt(raw || '1', 10)
+  return Number.isFinite(n) && n > 0 ? n : 1
+}
+
+function buildParams({ syncJobId, page }) {
+  const next = {}
+  if (syncJobId) next.sync_job_id = syncJobId
+  if (page > 1) next.page = String(page)
+  return next
+}
+
 export default function SyncLogsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const filterJobId = searchParams.get('sync_job_id') || ''
+  const page = parsePage(searchParams.get('page'))
   const [items, setItems] = useState([])
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
@@ -64,9 +84,20 @@ export default function SyncLogsPage() {
     setRefreshing(true)
     setError('')
     try {
-      const data = await listSyncLogs(filterJobId || undefined)
+      const data = await listSyncLogs({
+        syncJobId: filterJobId || undefined,
+        page,
+        pageSize: PAGE_SIZE,
+      })
       if (requestId.current !== id) return
-      setItems(data || [])
+      setItems(data?.items || [])
+      setTotal(data?.total ?? 0)
+      setTotalPages(data?.total_pages ?? 0)
+      if (data?.total_pages > 0 && page > data.total_pages) {
+        setSearchParams(buildParams({ syncJobId: filterJobId, page: data.total_pages }), {
+          replace: true,
+        })
+      }
     } catch (err) {
       if (requestId.current !== id) return
       setError(err.message || 'Failed to load sync logs')
@@ -76,7 +107,7 @@ export default function SyncLogsPage() {
         setRefreshing(false)
       }
     }
-  }, [filterJobId])
+  }, [filterJobId, page, setSearchParams])
 
   useEffect(() => {
     load()
@@ -85,11 +116,11 @@ export default function SyncLogsPage() {
   function applyFilter(event) {
     event.preventDefault()
     const next = draftFilter.trim()
-    if (next) {
-      setSearchParams({ sync_job_id: next })
-    } else {
-      setSearchParams({})
-    }
+    setSearchParams(buildParams({ syncJobId: next, page: 1 }))
+  }
+
+  function setPage(next) {
+    setSearchParams(buildParams({ syncJobId: filterJobId, page: next }))
   }
 
   return (
@@ -140,9 +171,9 @@ export default function SyncLogsPage() {
 
       <ErrorBanner message={error} />
 
-      {loading || refreshing ? (
+      {loading && items.length === 0 ? (
         <LoadingState />
-      ) : items.length === 0 ? (
+      ) : !loading && items.length === 0 ? (
         <EmptyState
           title="No sync logs"
           message={
@@ -152,39 +183,74 @@ export default function SyncLogsPage() {
           }
         />
       ) : (
-        <ListStack>
-          {items.map((item, index) => (
-            <ListRow key={item.id} className={`stagger-${Math.min(index + 1, 5)}`}>
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="pt-0.5">
-                  <StatusBadge status={item.status} />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-semibold text-[var(--text)]">
-                      {item.sync_job?.name || `Job #${item.sync_job_id}`}
-                    </h3>
-                    <MetaChip>log #{item.id}</MetaChip>
-                  </div>
-                  <p className="mt-1 text-sm text-[var(--text-muted)]">
-                    {formatDate(item.started_at)}
-                    <span className="mx-2 text-[var(--border-strong)]">·</span>
-                    {formatDuration(item.duration_ms)}
-                  </p>
-                  <SyncProgress log={item} className="mt-3 max-w-sm" />
-                  {item.message ? (
-                    <p className="mt-2 line-clamp-2 max-w-2xl text-xs text-[var(--text-muted)]">
-                      {item.message}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-              <Link to={`/sync-logs/${item.id}`}>
-                <SecondaryButton>Details</SecondaryButton>
-              </Link>
-            </ListRow>
-          ))}
-        </ListStack>
+        <TableShell
+          footer={
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={total}
+              pageSize={PAGE_SIZE}
+              onPageChange={setPage}
+              disabled={loading || refreshing}
+            />
+          }
+        >
+          <table className={tableClassName}>
+            <thead>
+              <tr>
+                <Th>Status</Th>
+                <Th>Job</Th>
+                <Th>Started</Th>
+                <Th>Duration</Th>
+                <Th>Progress</Th>
+                <Th className="text-right"> </Th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id} className="transition-colors hover:bg-[var(--bg-elevated)]/70">
+                  <Td>
+                    <StatusBadge status={item.status} />
+                  </Td>
+                  <Td>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        to={`/sync-jobs/${item.sync_job_id}`}
+                        className="font-semibold text-[var(--text)] transition-colors hover:text-[var(--accent)]"
+                      >
+                        {item.sync_job?.name || `Job #${item.sync_job_id}`}
+                      </Link>
+                      <MetaChip>log #{item.id}</MetaChip>
+                    </div>
+                    {item.message ? (
+                      <p className="mt-1 line-clamp-1 max-w-md text-xs text-[var(--text-muted)]">
+                        {item.message}
+                      </p>
+                    ) : null}
+                  </Td>
+                  <Td>
+                    <span className="text-xs text-[var(--text-muted)] whitespace-nowrap">
+                      {formatDate(item.started_at)}
+                    </span>
+                  </Td>
+                  <Td>
+                    <span className="font-mono text-xs text-[var(--text-muted)]">
+                      {formatDuration(item.duration_ms)}
+                    </span>
+                  </Td>
+                  <Td>
+                    <SyncProgress log={item} className="min-w-[10rem] max-w-xs" />
+                  </Td>
+                  <Td className="text-right">
+                    <Link to={`/sync-logs/${item.id}`}>
+                      <SecondaryButton>Details</SecondaryButton>
+                    </Link>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableShell>
       )}
     </div>
   )

@@ -69,12 +69,20 @@ type UpdateInput struct {
 	Fields                  *[]FieldInput    `json:"fields"`
 }
 
-func (s *Service) List() ([]models.SyncJob, error) {
-	var items []models.SyncJob
-	if err := s.db.Preload("SourceConnection").Preload("DestinationConnection").Preload("Relations").Preload("Fields").Order("id asc").Find(&items).Error; err != nil {
-		return nil, err
+func (s *Service) List(page, pageSize int) ([]models.SyncJob, int64, error) {
+	var total int64
+	if err := s.db.Model(&models.SyncJob{}).Count(&total).Error; err != nil {
+		return nil, 0, err
 	}
-	return items, nil
+	var items []models.SyncJob
+	q := s.db.Preload("SourceConnection").Preload("DestinationConnection").
+		Order("id asc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize)
+	if err := q.Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 func (s *Service) Get(id uint) (*models.SyncJob, error) {
@@ -196,7 +204,7 @@ func (s *Service) Update(id uint, in UpdateInput) (*models.SyncJob, error) {
 }
 
 func (s *Service) Delete(id uint) error {
-	res := s.db.Select("Relations", "Fields").Delete(&models.SyncJob{}, id)
+	res := s.db.Select("Relations", "Fields", "Logs").Delete(&models.SyncJob{ID: id})
 	if res.Error != nil {
 		return res.Error
 	}

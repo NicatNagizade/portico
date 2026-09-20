@@ -88,6 +88,7 @@ type SyncJob struct {
 	DestinationConnection   *Connection       `json:"destination_connection,omitempty" gorm:"foreignKey:DestinationConnectionID"`
 	Relations               []SyncJobRelation `json:"relations,omitempty" gorm:"foreignKey:SyncJobID;constraint:OnDelete:CASCADE"`
 	Fields                  []SyncJobField    `json:"fields,omitempty" gorm:"foreignKey:SyncJobID;constraint:OnDelete:CASCADE"`
+	Logs                    []SyncLog         `json:"-" gorm:"foreignKey:SyncJobID;constraint:OnDelete:CASCADE"`
 	CreatedAt               time.Time         `json:"created_at"`
 	UpdatedAt               time.Time         `json:"updated_at"`
 }

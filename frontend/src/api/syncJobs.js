@@ -1,7 +1,16 @@
 import { request } from './client'
+import { normalizePage } from './pagination'
 
-export function listSyncJobs() {
-  return request('/sync-jobs')
+function buildListQuery({ page, pageSize } = {}) {
+  const params = new URLSearchParams()
+  if (page) params.set('page', String(page))
+  if (pageSize) params.set('page_size', String(pageSize))
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export function listSyncJobs({ page = 1, pageSize = 20 } = {}) {
+  return request(`/sync-jobs${buildListQuery({ page, pageSize })}`).then(normalizePage)
 }
 
 export function getSyncJob(id) {

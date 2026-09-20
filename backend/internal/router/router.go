@@ -14,6 +14,8 @@ import (
 func New(h *handlers.Handlers) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
+	// Direct listeners only; do not honor X-Forwarded-* from arbitrary clients.
+	_ = r.SetTrustedProxies(nil)
 
 	r.GET("/health", h.Health)
 
@@ -22,6 +24,8 @@ func New(h *handlers.Handlers) *gin.Engine {
 	r.GET("/connections/:id", h.GetConnection)
 	r.PUT("/connections/:id", h.UpdateConnection)
 	r.DELETE("/connections/:id", h.DeleteConnection)
+	r.GET("/connections/:id/tables", h.ListConnectionTables)
+	r.GET("/connections/:id/columns", h.ListConnectionColumns)
 
 	r.GET("/sync-jobs", h.ListSyncJobs)
 	r.POST("/sync-jobs", h.CreateSyncJob)

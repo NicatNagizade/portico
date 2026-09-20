@@ -1,4 +1,5 @@
 import { RELATION_TYPES } from '../../lib/destinationTypes'
+import AutocompleteInput from '../AutocompleteInput'
 import { GhostButton, SecondaryButton, inputClassName } from '../ui'
 
 function emptyRelation() {
@@ -14,7 +15,15 @@ function emptyRelation() {
   }
 }
 
-export default function RelationEditor({ relations, onChange }) {
+export default function RelationEditor({
+  relations,
+  onChange,
+  tables = [],
+  columnsByTable = {},
+  relationNames = [],
+  onNeedTables,
+  onNeedColumns,
+}) {
   function updateRow(index, patch) {
     onChange(relations.map((row, i) => (i === index ? { ...row, ...patch } : row)))
   }
@@ -51,6 +60,12 @@ export default function RelationEditor({ relations, onChange }) {
         <div className="space-y-3">
           {relations.map((row, index) => {
             const isBelongsToMany = row.type === 'belongs_to_many'
+            const relatedColumns = columnsByTable[row.table] || []
+            const pivotColumns = columnsByTable[row.pivot_table] || []
+            const keyTable = isBelongsToMany ? row.pivot_table : row.table
+            const keyColumns = isBelongsToMany ? pivotColumns : relatedColumns
+            const otherRelationNames = relationNames.filter((name) => name !== row.name)
+
             return (
               <div
                 key={index}
@@ -81,9 +96,10 @@ export default function RelationEditor({ relations, onChange }) {
                 </label>
                 <label className="block text-xs">
                   <span className="mb-1.5 block text-[var(--text-muted)]">Related table</span>
-                  <input
-                    className={inputClassName}
+                  <AutocompleteInput
+                    options={tables}
                     value={row.table}
+                    onFocus={onNeedTables}
                     onChange={(e) => updateRow(index, { table: e.target.value })}
                     required
                   />
@@ -91,9 +107,10 @@ export default function RelationEditor({ relations, onChange }) {
                 {isBelongsToMany && (
                   <label className="block text-xs">
                     <span className="mb-1.5 block text-[var(--text-muted)]">Pivot table</span>
-                    <input
-                      className={inputClassName}
+                    <AutocompleteInput
+                      options={tables}
                       value={row.pivot_table || ''}
+                      onFocus={onNeedTables}
                       onChange={(e) => updateRow(index, { pivot_table: e.target.value })}
                       required
                     />
@@ -101,9 +118,10 @@ export default function RelationEditor({ relations, onChange }) {
                 )}
                 <label className="block text-xs">
                   <span className="mb-1.5 block text-[var(--text-muted)]">Foreign key</span>
-                  <input
-                    className={inputClassName}
+                  <AutocompleteInput
+                    options={keyColumns}
                     value={row.foreign_key || ''}
+                    onFocus={() => onNeedColumns?.(keyTable)}
                     onChange={(e) => updateRow(index, { foreign_key: e.target.value })}
                     placeholder="auto"
                   />
@@ -111,9 +129,10 @@ export default function RelationEditor({ relations, onChange }) {
                 {isBelongsToMany && (
                   <label className="block text-xs">
                     <span className="mb-1.5 block text-[var(--text-muted)]">Related key</span>
-                    <input
-                      className={inputClassName}
+                    <AutocompleteInput
+                      options={keyColumns}
                       value={row.related_key || ''}
+                      onFocus={() => onNeedColumns?.(keyTable)}
                       onChange={(e) => updateRow(index, { related_key: e.target.value })}
                       placeholder="auto"
                     />
@@ -121,8 +140,8 @@ export default function RelationEditor({ relations, onChange }) {
                 )}
                 <label className="block text-xs">
                   <span className="mb-1.5 block text-[var(--text-muted)]">Parent relation</span>
-                  <input
-                    className={inputClassName}
+                  <AutocompleteInput
+                    options={otherRelationNames}
                     value={row.parent_relation || ''}
                     onChange={(e) => updateRow(index, { parent_relation: e.target.value })}
                     placeholder="root (empty)"

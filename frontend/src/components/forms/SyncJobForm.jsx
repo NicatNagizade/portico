@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
+import { parseConfig } from '../../lib/connectionTypes'
+import useConnectionSchema from '../../hooks/useConnectionSchema'
+import AutocompleteInput from '../AutocompleteInput'
+import { Field, PrimaryButton, inputClassName } from '../ui'
 import FieldEditor from './FieldEditor'
 import RelationEditor from './RelationEditor'
-import { Field, PrimaryButton, inputClassName } from '../ui'
-import { parseConfig } from '../../lib/connectionTypes'
 
 function toArrayCsv(value) {
   if (Array.isArray(value)) return value.join(', ')
@@ -68,6 +70,9 @@ export default function SyncJobForm({
     })),
   )
 
+  const { tables, columnsByTable, ensureTables, ensureColumns } =
+    useConnectionSchema(sourceConnectionId)
+
   const sourceConnections = useMemo(
     () => connections.filter((c) => c.type === 'mysql' || c.type === 'postgres'),
     [connections],
@@ -76,6 +81,9 @@ export default function SyncJobForm({
     () => connections.filter((c) => c.type === 'typesense'),
     [connections],
   )
+
+  const sourceColumns = columnsByTable[sourceTable.trim()] || []
+  const relationNames = relations.map((r) => r.name).filter(Boolean)
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -146,10 +154,11 @@ export default function SyncJobForm({
             />
           </Field>
           <Field label="Source table">
-            <input
+            <AutocompleteInput
               required
-              className={inputClassName}
+              options={tables}
               value={sourceTable}
+              onFocus={ensureTables}
               onChange={(e) => setSourceTable(e.target.value)}
             />
           </Field>
@@ -226,9 +235,10 @@ export default function SyncJobForm({
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Default sorting field">
-            <input
-              className={inputClassName}
+            <AutocompleteInput
+              options={sourceColumns}
               value={config.default_sorting_field}
+              onFocus={() => ensureColumns(sourceTable)}
               onChange={(e) =>
                 setConfig((prev) => ({ ...prev, default_sorting_field: e.target.value }))
               }
@@ -267,11 +277,24 @@ export default function SyncJobForm({
       </div>
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <FieldEditor fields={fields} onChange={setFields} />
+        <FieldEditor
+          fields={fields}
+          onChange={setFields}
+          sourceColumns={sourceColumns}
+          onNeedSourceColumns={() => ensureColumns(sourceTable)}
+        />
       </div>
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <RelationEditor relations={relations} onChange={setRelations} />
+        <RelationEditor
+          relations={relations}
+          onChange={setRelations}
+          tables={tables}
+          columnsByTable={columnsByTable}
+          relationNames={relationNames}
+          onNeedTables={ensureTables}
+          onNeedColumns={ensureColumns}
+        />
       </div>
 
       <div className="flex justify-end border-t border-[var(--border)] pt-5">

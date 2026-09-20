@@ -6,7 +6,9 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/models"
+	"github.com/portico/backend/internal/pagination"
 	"github.com/portico/backend/internal/services/connection"
 	"github.com/portico/backend/internal/services/sync"
 	"github.com/portico/backend/internal/services/syncjob"
@@ -21,6 +23,7 @@ type Handlers struct {
 	SyncJobs    *syncjob.Service
 	SyncLogs    *synclog.Service
 	Sync        *sync.Orchestrator
+	Registry    *connectors.Registry
 }
 
 func New(
@@ -28,17 +31,37 @@ func New(
 	syncJobs *syncjob.Service,
 	syncLogs *synclog.Service,
 	orch *sync.Orchestrator,
+	registry *connectors.Registry,
 ) *Handlers {
 	return &Handlers{
 		Connections: connections,
 		SyncJobs:    syncJobs,
 		SyncLogs:    syncLogs,
 		Sync:        orch,
+		Registry:    registry,
 	}
 }
 
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// SyncJobListResponse is a paginated list of sync jobs.
+type SyncJobListResponse struct {
+	Items      []models.SyncJob `json:"items"`
+	Page       int              `json:"page" example:"1"`
+	PageSize   int              `json:"page_size" example:"20"`
+	Total      int64            `json:"total" example:"42"`
+	TotalPages int              `json:"total_pages" example:"3"`
+}
+
+// SyncLogListResponse is a paginated list of sync logs.
+type SyncLogListResponse struct {
+	Items      []models.SyncLog `json:"items"`
+	Page       int              `json:"page" example:"1"`
+	PageSize   int              `json:"page_size" example:"20"`
+	Total      int64            `json:"total" example:"100"`
+	TotalPages int              `json:"total_pages" example:"5"`
 }
 
 func parseID(raw string) (uint, error) {
@@ -192,20 +215,110 @@ func (h *Handlers) DeleteConnection(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// ListSyncJobs godoc
-// @Summary List sync jobs
-// @Tags sync-jobs
+// ListConnectionTables godoc
+// @Summary List tables for a source connection
+// @Tags connections
 // @Produce json
-// @Success 200 {array} models.SyncJob
+// @Param id path int true "Connection ID"
+// @Success 200 {object} map[string][]string
+// @Failure 404 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
-// @Router /sync-jobs [get]
-func (h *Handlers) ListSyncJobs(c *gin.Context) {
-	items, err := h.SyncJobs.List()
+// @Router /connections/{id}/tables [get]
+func (h *Handlers) ListConnectionTables(c *gin.Context) {
+	src, ok := h.openSource(c)
+	if !ok {
+		return
+	}
+	defer src.Close()
+
+	tables, err := src.ListTables(c.Request.Context())
 	if err != nil {
 		writeErr(c, err, nil)
 		return
 	}
-	c.JSON(http.StatusOK, items)
+	if tables == nil {
+		tables = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"tables": tables})
+}
+
+// ListConnectionColumns godoc
+// @Summary List columns for a table on a source connection
+// @Tags connections
+// @Produce json
+// @Param id path int true "Connection ID"
+// @Param table query string true "Table name"
+// @Success 200 {object} map[string][]string
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /connections/{id}/columns [get]
+func (h *Handlers) ListConnectionColumns(c *gin.Context) {
+	table := c.Query("table")
+	if table == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "table is required"})
+		return
+	}
+
+	src, ok := h.openSource(c)
+	if !ok {
+		return
+	}
+	defer src.Close()
+
+	schema, err := src.Schema(c.Request.Context(), table)
+	if err != nil {
+		writeErr(c, err, nil)
+		return
+	}
+
+	columns := make([]string, 0, len(schema.Columns))
+	for _, col := range schema.Columns {
+		columns = append(columns, col.Name)
+	}
+	c.JSON(http.StatusOK, gin.H{"columns": columns})
+}
+
+func (h *Handlers) openSource(c *gin.Context) (connectors.SourceReader, bool) {
+	id, ok := pathID(c)
+	if !ok {
+		return nil, false
+	}
+	conn, err := h.Connections.Get(id)
+	if err != nil {
+		writeErr(c, err, connection.ErrNotFound)
+		return nil, false
+	}
+	src, err := h.Registry.NewSource(conn)
+	if err != nil {
+		writeErr(c, err, nil)
+		return nil, false
+	}
+	if err := src.Open(c.Request.Context()); err != nil {
+		writeErr(c, err, nil)
+		return nil, false
+	}
+	return src, true
+}
+
+// ListSyncJobs godoc
+// @Summary List sync jobs
+// @Description Returns a paginated list of sync jobs. Default page size is 20; maximum is 100.
+// @Tags sync-jobs
+// @Produce json
+// @Param page query int false "Page number (1-based)" default(1) minimum(1)
+// @Param page_size query int false "Items per page (max 100)" default(20) minimum(1) maximum(100)
+// @Success 200 {object} SyncJobListResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /sync-jobs [get]
+func (h *Handlers) ListSyncJobs(c *gin.Context) {
+	p := pagination.Parse(c)
+	items, total, err := h.SyncJobs.List(p.Page, p.PageSize)
+	if err != nil {
+		writeErr(c, err, nil)
+		return
+	}
+	c.JSON(http.StatusOK, pagination.NewPage(items, total, p))
 }
 
 // CreateSyncJob godoc
@@ -336,10 +449,14 @@ func (h *Handlers) RunSyncJob(c *gin.Context) {
 
 // ListSyncLogs godoc
 // @Summary List sync logs
+// @Description Returns a paginated list of sync logs, newest first. Optionally filter by sync_job_id. Default page size is 20; maximum is 100. Each item includes the related sync job when available.
 // @Tags sync-logs
 // @Produce json
 // @Param sync_job_id query int false "Filter by sync job ID"
-// @Success 200 {array} models.SyncLog
+// @Param page query int false "Page number (1-based)" default(1) minimum(1)
+// @Param page_size query int false "Items per page (max 100)" default(20) minimum(1) maximum(100)
+// @Success 200 {object} SyncLogListResponse
+// @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /sync-logs [get]
 func (h *Handlers) ListSyncLogs(c *gin.Context) {
@@ -352,12 +469,13 @@ func (h *Handlers) ListSyncLogs(c *gin.Context) {
 		}
 		jobID = &id
 	}
-	items, err := h.SyncLogs.List(jobID)
+	p := pagination.Parse(c)
+	items, total, err := h.SyncLogs.List(jobID, p.Page, p.PageSize)
 	if err != nil {
 		writeErr(c, err, nil)
 		return
 	}
-	c.JSON(http.StatusOK, items)
+	c.JSON(http.StatusOK, pagination.NewPage(items, total, p))
 }
 
 // GetSyncLog godoc

@@ -34,7 +34,7 @@ func (o *Orchestrator) Run(ctx context.Context, jobID uint) (*models.SyncLog, er
 		return nil, err
 	}
 
-	rowsTotal, rowsSynced, runErr := o.execute(ctx, jobID, logEntry.ID)
+	rowsTotal, rowsSynced, runErr := o.execute(ctx, jobID, logEntry.ID, started)
 	finished := time.Now()
 	duration := finished.Sub(started).Milliseconds()
 	logEntry.FinishedAt = &finished
@@ -56,7 +56,7 @@ func (o *Orchestrator) Run(ctx context.Context, jobID uint) (*models.SyncLog, er
 	return &logEntry, runErr
 }
 
-func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint) (rowsTotal, rowsSynced int64, err error) {
+func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started time.Time) (rowsTotal, rowsSynced int64, err error) {
 	var job models.SyncJob
 	if err := o.db.
 		Preload("SourceConnection").
@@ -146,7 +146,7 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint) (rowsTota
 			}
 			n := int64(len(batch))
 			syncedRows.Add(n)
-			if err := o.recordChunkSynced(logID, n); err != nil {
+			if err := o.recordChunkSynced(logID, n, started); err != nil {
 				return fmt.Errorf("update rows_synced: %w", err)
 			}
 			return nil
@@ -172,9 +172,13 @@ func (o *Orchestrator) recordRowsTotal(logID uint, n int64) error {
 		Error
 }
 
-func (o *Orchestrator) recordChunkSynced(logID uint, n int64) error {
+func (o *Orchestrator) recordChunkSynced(logID uint, n int64, started time.Time) error {
+	duration := time.Since(started).Milliseconds()
 	return o.db.Model(&models.SyncLog{}).
 		Where("id = ?", logID).
-		Update("rows_synced", gorm.Expr("COALESCE(rows_synced, 0) + ?", n)).
+		Updates(map[string]any{
+			"rows_synced": gorm.Expr("COALESCE(rows_synced, 0) + ?", n),
+			"duration_ms": duration,
+		}).
 		Error
 }

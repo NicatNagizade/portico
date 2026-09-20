@@ -18,7 +18,7 @@ import (
 
 // @title Portico Sync API
 // @version 1.0
-// @description API for managing database connections and syncing data to destinations like Typesense.
+// @description API for managing database connections and syncing data to destinations like Typesense. List endpoints for sync jobs and sync logs return a paginated envelope: items, page, page_size, total, total_pages.
 // @BasePath /
 func main() {
 	cfg, err := config.Load()
@@ -41,7 +41,7 @@ func main() {
 	jobSvc := syncjob.NewService(gdb)
 	logSvc := synclog.NewService(gdb)
 	orch := sync.NewOrchestrator(gdb, registry)
-	h := handlers.New(connSvc, jobSvc, logSvc, orch)
+	h := handlers.New(connSvc, jobSvc, logSvc, orch, registry)
 
 	r := router.New(h)
 	log.Printf("listening on %s", cfg.HTTPAddr)
