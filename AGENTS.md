@@ -20,6 +20,7 @@ make frontend                           # Vite :5173 (proxies /api)
 make test                               # backend tests (needs CGO)
 make swagger                            # regenerate backend/docs/swagger.json only
 make lint                               # frontend oxlint
+make migrate-refresh                    # DESTRUCTIVE: drop all app tables + AutoMigrate
 make example-migrate && make example-seed
 ```
 
@@ -72,9 +73,9 @@ These come from how this project is built day to day. Prefer them over “clever
 ## Domain model
 
 - **Connections** — `mysql` | `postgres` | `typesense` (| `mongodb` reserved). Config JSON sealed at rest.
-- **Sync jobs** — `source_table` → `destination_table` (collection name for Typesense), plus `chunk_size`, `parallelism`, opaque `config`.
-- **Fields** — optional overrides (rename / type / exclude). Omit all → pass through every source column. `active=false` → exclude from import. Coerce values to the declared destination type before write (e.g. object → string when type is string).
-- **Relations** — `has_many` / `belongs_to_many` (+ optional `parent_relation` for nesting). Always select all related columns. Empty FK/key fields fall back to the related field name. Emit arrays/nested objects in the destination doc — not flattened joins. `active=false` skips the relation.
+- **Sync jobs** — `source_connection_id` → `source_table` → `destination_connection_id` → `destination_table`, plus `chunk_size`, `workers`, opaque `config`.
+- **Fields** — optional overrides (rename / type / exclude). Omit all → pass through every source column. `active=false` → exclude from import. Coerce values to the declared destination type before write (e.g. object → string when type is string). Nullable `sync_job_relation_id` scopes a field to a relation’s related rows; omit for root/source fields.
+- **Relations** — `belongs_to_many` / `has_many` / `has_one` / `belongs_to` (+ optional `parent_id` pointing at another `sync_job_relations.id` for nesting). `belongs_to_many` stores `pivot_table` inside relation `config` JSON. Always select all related columns. Empty FK/key fields fall back to the related field name. Emit arrays/nested objects in the destination doc — not flattened joins. `active=false` skips the relation.
 - **Sync logs** — status, `rows_total` (source count at start), `rows_synced` (updated after each chunk), `duration_ms` (updated with progress). Progress UI = `rows_synced / rows_total` — nothing fancier.
 - **Sync behavior** — destination is prepared/cleared then bulk-written in chunks from the job’s `chunk_size`.
 

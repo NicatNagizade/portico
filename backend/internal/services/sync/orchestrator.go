@@ -62,7 +62,8 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 		Preload("SourceConnection").
 		Preload("DestinationConnection").
 		Preload("Relations").
-		Preload("Fields").
+		Preload("Relations.Fields").
+		Preload("Fields", "sync_job_relation_id IS NULL").
 		First(&job, jobID).Error; err != nil {
 		return 0, 0, fmt.Errorf("load sync job: %w", err)
 	}
@@ -110,7 +111,7 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 	if chunkSize <= 0 {
 		chunkSize = 500
 	}
-	parallel := job.ParallelCount
+	parallel := job.Workers
 	if parallel <= 0 {
 		parallel = 1
 	}

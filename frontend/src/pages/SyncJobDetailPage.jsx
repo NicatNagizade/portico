@@ -166,8 +166,8 @@ export default function SyncJobDetailPage() {
               <dd className="font-mono font-medium">{job.chunk_size}</dd>
             </div>
             <div className="flex justify-between gap-4 border-b border-[var(--border)] pb-3">
-              <dt className="text-[var(--text-muted)]">Parallel workers</dt>
-              <dd className="font-mono font-medium">{job.parallel_count}</dd>
+              <dt className="text-[var(--text-muted)]">Workers</dt>
+              <dd className="font-mono font-medium">{job.workers}</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-[var(--text-muted)]">Updated</dt>
@@ -192,7 +192,7 @@ export default function SyncJobDetailPage() {
 
         <Panel
           title="Field overrides"
-          description={`${(job.fields || []).length} configured`}
+          description={`${(job.fields || []).length} root field(s)`}
           className="animate-fade-up stagger-3 lg:col-span-2"
         >
           {(job.fields || []).length === 0 ? (
@@ -229,23 +229,39 @@ export default function SyncJobDetailPage() {
             <p className="text-sm text-[var(--text-muted)]">No relations configured.</p>
           ) : (
             <ul className="space-y-3">
-              {job.relations.map((relation) => (
-                <li
-                  key={relation.id}
-                  className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/60 p-4"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-semibold">{relation.name}</span>
-                    <MetaChip>{relation.active === false ? 'inactive' : 'active'}</MetaChip>
-                  </div>
-                  <p className="mt-2 font-mono text-xs leading-relaxed text-[var(--text-muted)]">
-                    {relation.type} · table={relation.table}
-                    {relation.pivot_table ? ` · pivot=${relation.pivot_table}` : ''}
-                    {relation.foreign_key ? ` · fk=${relation.foreign_key}` : ''}
-                    {relation.related_key ? ` · rk=${relation.related_key}` : ''}
-                  </p>
-                </li>
-              ))}
+              {job.relations.map((relation) => {
+                const relConfig = parseConfig(relation.config)
+                const parent = (job.relations || []).find((r) => r.id === relation.parent_id)
+                return (
+                  <li
+                    key={relation.id}
+                    className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/60 p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold">{relation.name}</span>
+                      <MetaChip>{relation.active === false ? 'inactive' : 'active'}</MetaChip>
+                    </div>
+                    <p className="mt-2 font-mono text-xs leading-relaxed text-[var(--text-muted)]">
+                      {relation.type} · table={relation.table}
+                      {relConfig.pivot_table ? ` · pivot=${relConfig.pivot_table}` : ''}
+                      {relation.foreign_key ? ` · fk=${relation.foreign_key}` : ''}
+                      {relation.related_key ? ` · rk=${relation.related_key}` : ''}
+                      {parent ? ` · parent=${parent.name}` : ''}
+                    </p>
+                    {(relation.fields || []).length > 0 ? (
+                      <ul className="mt-3 space-y-1 border-t border-[var(--border)] pt-3">
+                        {relation.fields.map((field) => (
+                          <li key={field.id} className="font-mono text-xs text-[var(--text-muted)]">
+                            {field.source_name}
+                            {field.destination_name ? ` → ${field.destination_name}` : ''}
+                            {field.destination_type ? ` (${field.destination_type})` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </Panel>

@@ -34,14 +34,41 @@ func Connect(driver, dsn string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	if err := gdb.AutoMigrate(&models.Connection{}, &models.SyncJob{}, &models.SyncJobRelation{}, &models.SyncJobField{}, &models.SyncLog{}); err != nil {
-		return nil, fmt.Errorf("auto migrate: %w", err)
+	if err := migrate(gdb); err != nil {
+		return nil, err
 	}
 	if err := sealPlaintextConnectionConfigs(gdb); err != nil {
 		return nil, fmt.Errorf("seal connection configs: %w", err)
 	}
 
 	return gdb, nil
+}
+
+func migrate(gdb *gorm.DB) error {
+	if err := gdb.AutoMigrate(
+		&models.Connection{},
+		&models.SyncJob{},
+		&models.SyncJobRelation{},
+		&models.SyncJobField{},
+		&models.SyncLog{},
+	); err != nil {
+		return fmt.Errorf("auto migrate: %w", err)
+	}
+	return nil
+}
+
+// Refresh drops all app tables and re-runs AutoMigrate. Destructive — all data is lost.
+func Refresh(gdb *gorm.DB) error {
+	if err := gdb.Migrator().DropTable(
+		&models.SyncLog{},
+		&models.SyncJobField{},
+		&models.SyncJobRelation{},
+		&models.SyncJob{},
+		&models.Connection{},
+	); err != nil {
+		return fmt.Errorf("drop tables: %w", err)
+	}
+	return migrate(gdb)
 }
 
 // sealPlaintextConnectionConfigs encrypts secret fields on rows written before encryption existed.

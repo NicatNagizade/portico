@@ -49,6 +49,15 @@ func setupRouter(t *testing.T, gdb *gorm.DB, registry *connectors.Registry) *gin
 	return router.New(h)
 }
 
+func pivotTable(cfg datatypes.JSON) string {
+	var m map[string]any
+	if err := json.Unmarshal(cfg, &m); err != nil {
+		return ""
+	}
+	v, _ := m["pivot_table"].(string)
+	return v
+}
+
 func TestHealth(t *testing.T) {
 	gdb := setupTestDB(t)
 	r := setupRouter(t, gdb, connectors.NewRegistry())
@@ -268,28 +277,28 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	body := map[string]any{
 		"name":                      "applicants-to-typesense",
 		"source_connection_id":      src.ID,
-		"destination_connection_id": dst.ID,
 		"source_table":              "applicants",
+		"destination_connection_id": dst.ID,
 		"destination_table":         "applicants",
 		"chunk_size":                100,
-		"parallel_count":            2,
+		"workers":                   2,
 		"config": map[string]any{
 			"default_sorting_field": "id",
 			"enable_nested_fields":  true,
 		},
 		"relations": []map[string]any{
 			{
-				"name":        "tags",
-				"type":        "belongs_to_many",
-				"table":       "tags",
-				"pivot_table": "applicant_tags",
+				"name":   "tags",
+				"type":   "belongs_to_many",
+				"table":  "tags",
+				"config": map[string]any{"pivot_table": "applicant_tags"},
 			},
 			{
-				"name":        "skills",
-				"type":        "belongs_to_many",
-				"table":       "skills",
-				"pivot_table": "applicant_skills",
-				"active":      false,
+				"name":   "skills",
+				"type":   "belongs_to_many",
+				"table":  "skills",
+				"config": map[string]any{"pivot_table": "applicant_skills"},
+				"active": false,
 			},
 		},
 		"fields": []map[string]any{
@@ -326,7 +335,7 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if len(job.Relations) != 2 {
 		t.Fatalf("expected 2 relations, got %+v", job.Relations)
 	}
-	if job.Relations[0].Name != "tags" || job.Relations[0].PivotTable != "applicant_tags" || !job.Relations[0].IsActive() {
+	if job.Relations[0].Name != "tags" || pivotTable(job.Relations[0].Config) != "applicant_tags" || !job.Relations[0].IsActive() {
 		t.Fatalf("expected active tags relation, got %+v", job.Relations[0])
 	}
 	if job.Relations[1].Name != "skills" || job.Relations[1].IsActive() {
@@ -374,7 +383,7 @@ func TestSyncJobsAndLogs(t *testing.T) {
 				"name":        "tags",
 				"type":        "belongs_to_many",
 				"table":       "tags",
-				"pivot_table": "applicant_tags",
+				"config":      map[string]any{"pivot_table": "applicant_tags"},
 				"foreign_key": "applicant_id",
 				"related_key": "tag_id",
 			},
@@ -624,7 +633,7 @@ func TestSyncRunWithMocks(t *testing.T) {
 		SourceTable:             "applicants",
 		DestinationTable:        "applicants",
 		ChunkSize:               2,
-		ParallelCount:           2,
+		Workers:                 2,
 		Config:                  datatypes.JSON([]byte(`{"default_sorting_field":"id","enable_nested_fields":false}`)),
 	}
 	if err := gdb.Create(&job).Error; err != nil {
@@ -723,7 +732,7 @@ func TestSyncRunUpdatesRowsSyncedAfterEachChunk(t *testing.T) {
 		SourceTable:             "applicants",
 		DestinationTable:        "applicants",
 		ChunkSize:               2,
-		ParallelCount:           1,
+		Workers:                 1,
 		Config:                  datatypes.JSON([]byte(`{}`)),
 	}
 	if err := gdb.Create(&job).Error; err != nil {
@@ -842,13 +851,13 @@ func TestSyncRunWithRelations(t *testing.T) {
 		SourceTable:             "applicants",
 		DestinationTable:        "applicants",
 		ChunkSize:               10,
-		ParallelCount:           1,
+		Workers:                 1,
 		Relations: []models.SyncJobRelation{
 			{
-				Name:       "tags",
-				Type:       models.RelationTypeBelongsToMany,
-				Table:      "tags",
-				PivotTable: "applicant_tags",
+				Name:   "tags",
+				Type:   models.RelationTypeBelongsToMany,
+				Table:  "tags",
+				Config: datatypes.JSON([]byte(`{"pivot_table":"applicant_tags"}`)),
 			},
 		},
 	}
@@ -974,31 +983,41 @@ func TestSyncRunWithNestedHasMany(t *testing.T) {
 		SourceTable:             "users",
 		DestinationTable:        "users",
 		ChunkSize:               10,
-		ParallelCount:           1,
-		Relations: []models.SyncJobRelation{
-			{
-				Name:       "posts",
-				Type:       models.RelationTypeHasMany,
-				Table:      "posts",
-				ForeignKey: "user_id",
-			},
-			{
-				Name:           "comments",
-				Type:           models.RelationTypeHasMany,
-				Table:          "comments",
-				ForeignKey:     "post_id",
-				ParentRelation: "posts",
-			},
-			{
-				Name:           "reactions",
-				Type:           models.RelationTypeHasMany,
-				Table:          "reactions",
-				ForeignKey:     "comment_id",
-				ParentRelation: "comments",
-			},
-		},
+		Workers:                 1,
 	}
 	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	postsRel := models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		Name:       "posts",
+		Type:       models.RelationTypeHasMany,
+		Table:      "posts",
+		ForeignKey: "user_id",
+	}
+	if err := gdb.Create(&postsRel).Error; err != nil {
+		t.Fatal(err)
+	}
+	commentsRel := models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		ParentID:   &postsRel.ID,
+		Name:       "comments",
+		Type:       models.RelationTypeHasMany,
+		Table:      "comments",
+		ForeignKey: "post_id",
+	}
+	if err := gdb.Create(&commentsRel).Error; err != nil {
+		t.Fatal(err)
+	}
+	reactionsRel := models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		ParentID:   &commentsRel.ID,
+		Name:       "reactions",
+		Type:       models.RelationTypeHasMany,
+		Table:      "reactions",
+		ForeignKey: "comment_id",
+	}
+	if err := gdb.Create(&reactionsRel).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -1140,6 +1159,126 @@ func TestSyncRunWithNestedHasMany(t *testing.T) {
 	bobReactions, ok := bobComments[0]["reactions"].([]map[string]any)
 	if !ok || len(bobReactions) != 0 {
 		t.Fatalf("expected Bob comment 0 reactions, got %#v", bobComments[0]["reactions"])
+	}
+}
+
+func TestSyncRunWithBelongsToAndRelationFields(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name: "src", Type: "mock_src", Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name: "dst", Type: "mock_dst", Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "posts-with-author",
+		SourceConnectionID:      srcConn.ID,
+		SourceTable:             "posts",
+		DestinationConnectionID: dstConn.ID,
+		DestinationTable:        "posts",
+		ChunkSize:               10,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	authorRel := models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		Name:       "author",
+		Type:       models.RelationTypeBelongsTo,
+		Table:      "users",
+		ForeignKey: "user_id",
+	}
+	if err := gdb.Create(&authorRel).Error; err != nil {
+		t.Fatal(err)
+	}
+	active := true
+	if err := gdb.Create(&models.SyncJobField{
+		SyncJobID:         job.ID,
+		SyncJobRelationID: &authorRel.ID,
+		SourceName:        "email",
+		DestinationName:   "email_address",
+		DestinationType:   "string",
+		Active:            &active,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "title", Type: connectors.FieldTypeString},
+				{Name: "user_id", Type: connectors.FieldTypeInt64},
+			},
+		},
+		schemas: map[string]*connectors.TableSchema{
+			"posts": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "title", Type: connectors.FieldTypeString},
+					{Name: "user_id", Type: connectors.FieldTypeInt64},
+				},
+			},
+			"users": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "name", Type: connectors.FieldTypeString},
+					{Name: "email", Type: connectors.FieldTypeString},
+				},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "title": "hello", "user_id": 10},
+		},
+		tableRows: map[string][]map[string]any{
+			"users": {
+				{"id": 10, "name": "Ada", "email": "ada@example.com"},
+			},
+		},
+	}
+	dst := &mockDest{}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/run", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var logEntry models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
+		t.Fatal(err)
+	}
+	if logEntry.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", logEntry.Status, logEntry.Message)
+	}
+	if len(dst.batches) == 0 || len(dst.batches[0]) == 0 {
+		t.Fatal("expected written docs")
+	}
+	author, ok := dst.batches[0][0]["author"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected author object, got %#v", dst.batches[0][0]["author"])
+	}
+	if fmt.Sprint(author["email_address"]) != "ada@example.com" {
+		t.Fatalf("expected renamed email field, got %#v", author)
+	}
+	if _, exists := author["email"]; exists {
+		t.Fatalf("expected source email removed after rename, got %#v", author)
 	}
 }
 

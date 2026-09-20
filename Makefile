@@ -1,6 +1,6 @@
 .PHONY: help setup setup-backend setup-frontend \
 	api frontend test build tidy swagger lint preview \
-	example-migrate example-seed
+	migrate-refresh example-migrate example-seed
 
 BACKEND := backend
 FRONTEND := frontend
@@ -43,6 +43,9 @@ swagger: ## Regenerate OpenAPI JSON
 
 lint: ## Lint frontend
 	cd $(FRONTEND) && npm run lint
+
+migrate-refresh: ## DESTRUCTIVE: drop all app tables and re-run AutoMigrate
+	cd $(BACKEND) && go run ./cmd/migrate refresh
 
 example-migrate: ## Create example Postgres DB + tables
 	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env

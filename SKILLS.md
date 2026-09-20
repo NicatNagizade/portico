@@ -40,7 +40,9 @@ Future pairs (MySQL→MySQL, MySQL→MongoDB) should land the same way — new c
 
 - No field rows → pass through all source columns.
 - `active=false` on a field or relation → skip it on import.
-- Relations: `has_many` / `belongs_to_many`; optional `parent_relation` for nesting.
+- Relations: `belongs_to_many` / `has_many` / `has_one` / `belongs_to`; optional `parent_id` (FK to another relation row) for nesting.
+- M2M pivot table lives in relation `config.pivot_table`.
+- Field rows may set `sync_job_relation_id` to override columns on related docs; omit for root fields.
 - Always select all related columns (no per-relation column pickers).
 - Empty foreign/related keys → fall back to the related field name.
 - Emit related rows as arrays / nested objects in the destination document — not SQL joins that flatten many-to-many.
@@ -70,6 +72,7 @@ Field order in models: `rows_total` before `rows_synced` — trust the model, do
 
 - Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR` — never `DATABASE_URL`.
 - Create the app database on migrate if it does not exist.
+- Refresh schema (destructive): `make migrate-refresh` drops all app tables and re-runs AutoMigrate.
 - Status columns: int/tinyint in DB; constants in code — no DB enum constraints.
 - Prefer GORM for app DB access.
 - Swagger: swag comments → `make swagger` → **only** `backend/docs/swagger.json`. Docs UI: `/api/documentation`.

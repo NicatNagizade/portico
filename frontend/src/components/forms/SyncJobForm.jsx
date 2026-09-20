@@ -30,6 +30,21 @@ function buildInitialConfig(config) {
   }
 }
 
+function mapField(f) {
+  return {
+    id: f.id,
+    source_name: f.source_name || '',
+    destination_name: f.destination_name || '',
+    destination_type: f.destination_type || '',
+    active: f.active !== false,
+  }
+}
+
+function pivotFromConfig(config) {
+  const parsed = parseConfig(config)
+  return parsed.pivot_table || ''
+}
+
 export default function SyncJobForm({
   initial,
   connections = [],
@@ -47,26 +62,21 @@ export default function SyncJobForm({
   const [sourceTable, setSourceTable] = useState(initial?.source_table || '')
   const [destinationTable, setDestinationTable] = useState(initial?.destination_table || '')
   const [chunkSize, setChunkSize] = useState(initial?.chunk_size ?? 500)
-  const [parallelCount, setParallelCount] = useState(initial?.parallel_count ?? 2)
+  const [workers, setWorkers] = useState(initial?.workers ?? 2)
   const [config, setConfig] = useState(() => buildInitialConfig(initial?.config))
-  const [fields, setFields] = useState(() =>
-    (initial?.fields || []).map((f) => ({
-      source_name: f.source_name || '',
-      destination_name: f.destination_name || '',
-      destination_type: f.destination_type || '',
-      active: f.active !== false,
-    })),
-  )
+  const [fields, setFields] = useState(() => (initial?.fields || []).map(mapField))
   const [relations, setRelations] = useState(() =>
     (initial?.relations || []).map((r) => ({
+      id: r.id,
       name: r.name || '',
-      type: r.type || 'belongs_to_many',
+      type: r.type || 'has_many',
       table: r.table || '',
-      pivot_table: r.pivot_table || '',
+      pivot_table: pivotFromConfig(r.config),
       foreign_key: r.foreign_key || '',
       related_key: r.related_key || '',
-      parent_relation: r.parent_relation || '',
+      parent_id: r.parent_id ?? '',
       active: r.active !== false,
+      fields: (r.fields || []).map(mapField),
     })),
   )
 
@@ -83,7 +93,6 @@ export default function SyncJobForm({
   )
 
   const sourceColumns = columnsByTable[sourceTable.trim()] || []
-  const relationNames = relations.map((r) => r.name).filter(Boolean)
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -98,35 +107,62 @@ export default function SyncJobForm({
     if (symbols.length) payloadConfig.symbols_to_index = symbols
     if (tokens.length) payloadConfig.token_separators = tokens
 
-    const payload = {
-      name: name.trim(),
-      source_connection_id: Number(sourceConnectionId),
-      destination_connection_id: Number(destinationConnectionId),
-      source_table: sourceTable.trim(),
-      destination_table: destinationTable.trim(),
-      chunk_size: Number(chunkSize) || 500,
-      parallel_count: Number(parallelCount) || 2,
-      config: payloadConfig,
-      fields: fields
+    const keptRelations = relations.filter((r) => r.name.trim() && r.table.trim())
+
+    const relationPayload = keptRelations.map((r) => {
+      const out = {
+        id: r.id,
+        name: r.name.trim(),
+        type: r.type,
+        table: r.table.trim(),
+        foreign_key: r.foreign_key?.trim() || undefined,
+        related_key: r.related_key?.trim() || undefined,
+        active: r.active !== false,
+      }
+      if (r.parent_id !== '' && r.parent_id != null) {
+        out.parent_id = Number(r.parent_id)
+      }
+      if (r.type === 'belongs_to_many' && r.pivot_table?.trim()) {
+        out.config = { pivot_table: r.pivot_table.trim() }
+      }
+      return out
+    })
+
+    const fieldPayload = [
+      ...fields
         .filter((f) => f.source_name.trim())
         .map((f) => ({
+          id: f.id && f.id > 0 ? f.id : undefined,
           source_name: f.source_name.trim(),
           destination_name: f.destination_name?.trim() || undefined,
           destination_type: f.destination_type || undefined,
           active: f.active !== false,
         })),
-      relations: relations
-        .filter((r) => r.name.trim() && r.table.trim())
-        .map((r) => ({
-          name: r.name.trim(),
-          type: r.type,
-          table: r.table.trim(),
-          pivot_table: r.pivot_table?.trim() || undefined,
-          foreign_key: r.foreign_key?.trim() || undefined,
-          related_key: r.related_key?.trim() || undefined,
-          parent_relation: r.parent_relation?.trim() || undefined,
-          active: r.active !== false,
-        })),
+      ...keptRelations.flatMap((r) =>
+        (r.fields || [])
+          .filter((f) => f.source_name.trim())
+          .map((f) => ({
+            id: f.id && f.id > 0 ? f.id : undefined,
+            sync_job_relation_id: r.id,
+            source_name: f.source_name.trim(),
+            destination_name: f.destination_name?.trim() || undefined,
+            destination_type: f.destination_type || undefined,
+            active: f.active !== false,
+          })),
+      ),
+    ]
+
+    const payload = {
+      name: name.trim(),
+      source_connection_id: Number(sourceConnectionId),
+      source_table: sourceTable.trim(),
+      destination_connection_id: Number(destinationConnectionId),
+      destination_table: destinationTable.trim(),
+      chunk_size: Number(chunkSize) || 500,
+      workers: Number(workers) || 2,
+      config: payloadConfig,
+      fields: fieldPayload,
+      relations: relationPayload,
     }
 
     onSubmit(payload)
@@ -145,23 +181,16 @@ export default function SyncJobForm({
           </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name">
-            <input
-              required
-              className={inputClassName}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Field>
-          <Field label="Source table">
-            <AutocompleteInput
-              required
-              options={tables}
-              value={sourceTable}
-              onFocus={ensureTables}
-              onChange={(e) => setSourceTable(e.target.value)}
-            />
-          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Name">
+              <input
+                required
+                className={inputClassName}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </Field>
+          </div>
           <Field label="Source connection">
             <select
               required
@@ -177,12 +206,13 @@ export default function SyncJobForm({
               ))}
             </select>
           </Field>
-          <Field label="Destination table">
-            <input
+          <Field label="Source table">
+            <AutocompleteInput
               required
-              className={inputClassName}
-              value={destinationTable}
-              onChange={(e) => setDestinationTable(e.target.value)}
+              options={tables}
+              value={sourceTable}
+              onFocus={ensureTables}
+              onChange={(e) => setSourceTable(e.target.value)}
             />
           </Field>
           <Field label="Destination connection">
@@ -200,6 +230,14 @@ export default function SyncJobForm({
               ))}
             </select>
           </Field>
+          <Field label="Destination table">
+            <input
+              required
+              className={inputClassName}
+              value={destinationTable}
+              onChange={(e) => setDestinationTable(e.target.value)}
+            />
+          </Field>
           <Field label="Chunk size">
             <input
               type="number"
@@ -209,13 +247,13 @@ export default function SyncJobForm({
               onChange={(e) => setChunkSize(e.target.value)}
             />
           </Field>
-          <Field label="Parallel count">
+          <Field label="Workers">
             <input
               type="number"
               min="1"
               className={inputClassName}
-              value={parallelCount}
-              onChange={(e) => setParallelCount(e.target.value)}
+              value={workers}
+              onChange={(e) => setWorkers(e.target.value)}
             />
           </Field>
         </div>
@@ -291,7 +329,7 @@ export default function SyncJobForm({
           onChange={setRelations}
           tables={tables}
           columnsByTable={columnsByTable}
-          relationNames={relationNames}
+          sourceTable={sourceTable}
           onNeedTables={ensureTables}
           onNeedColumns={ensureColumns}
         />

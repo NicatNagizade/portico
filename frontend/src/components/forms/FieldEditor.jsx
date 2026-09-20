@@ -4,6 +4,7 @@ import { GhostButton, SecondaryButton, inputClassName } from '../ui'
 
 function emptyField() {
   return {
+    id: undefined,
     source_name: '',
     destination_name: '',
     destination_type: '',
@@ -16,6 +17,10 @@ export default function FieldEditor({
   onChange,
   sourceColumns = [],
   onNeedSourceColumns,
+  title = 'Field overrides',
+  description = 'Rename columns, set destination types, or exclude fields.',
+  sectionNumber = '03',
+  compact = false,
 }) {
   function updateRow(index, patch) {
     onChange(fields.map((row, i) => (i === index ? { ...row, ...patch } : row)))
@@ -28,17 +33,19 @@ export default function FieldEditor({
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2">
-          <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
-            03
-          </span>
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--text)]">Field overrides</h3>
-            <p className="text-xs text-[var(--text-muted)]">
-              Rename columns, set destination types, or exclude fields.
-            </p>
+        {compact ? (
+          <p className="text-xs font-medium text-[var(--text-muted)]">{title}</p>
+        ) : (
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
+              {sectionNumber}
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--text)]">{title}</h3>
+              <p className="text-xs text-[var(--text-muted)]">{description}</p>
+            </div>
           </div>
-        </div>
+        )}
         <SecondaryButton type="button" onClick={() => onChange([...fields, emptyField()])}>
           Add field
         </SecondaryButton>
@@ -46,13 +53,13 @@ export default function FieldEditor({
 
       {fields.length === 0 ? (
         <p className="rounded-xl border border-dashed border-[var(--border)] px-4 py-6 text-center text-sm text-[var(--text-muted)]">
-          No overrides — source columns pass through unchanged.
+          No overrides — columns pass through unchanged.
         </p>
       ) : (
         <div className="space-y-3">
           {fields.map((row, index) => (
             <div
-              key={index}
+              key={row.id ?? `new-${index}`}
               className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] sm:grid-cols-2 lg:grid-cols-5"
             >
               <label className="block text-xs">

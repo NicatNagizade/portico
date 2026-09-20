@@ -22,6 +22,8 @@ const (
 
 	RelationTypeBelongsToMany = "belongs_to_many"
 	RelationTypeHasMany       = "has_many"
+	RelationTypeHasOne        = "has_one"
+	RelationTypeBelongsTo     = "belongs_to"
 )
 
 type Connection struct {
@@ -78,11 +80,11 @@ type SyncJob struct {
 	ID                      uint              `json:"id" gorm:"primaryKey"`
 	Name                    string            `json:"name" gorm:"size:255;not null"`
 	SourceConnectionID      uint              `json:"source_connection_id" gorm:"not null;index"`
-	DestinationConnectionID uint              `json:"destination_connection_id" gorm:"not null;index"`
 	SourceTable             string            `json:"source_table" gorm:"size:255;not null"`
+	DestinationConnectionID uint              `json:"destination_connection_id" gorm:"not null;index"`
 	DestinationTable        string            `json:"destination_table" gorm:"size:255;not null"`
 	ChunkSize               int               `json:"chunk_size" gorm:"not null;default:500"`
-	ParallelCount           int               `json:"parallel_count" gorm:"not null;default:2"`
+	Workers                 int               `json:"workers" gorm:"not null;default:2"`
 	Config                  datatypes.JSON    `json:"config,omitempty" gorm:"type:json" swaggertype:"object"`
 	SourceConnection        *Connection       `json:"source_connection,omitempty" gorm:"foreignKey:SourceConnectionID"`
 	DestinationConnection   *Connection       `json:"destination_connection,omitempty" gorm:"foreignKey:DestinationConnectionID"`
@@ -94,18 +96,19 @@ type SyncJob struct {
 }
 
 type SyncJobRelation struct {
-	ID             uint      `json:"id" gorm:"primaryKey"`
-	SyncJobID      uint      `json:"sync_job_id" gorm:"not null;index"`
-	Name           string    `json:"name" gorm:"size:255;not null"`
-	Type           string    `json:"type" gorm:"size:50;not null"`
-	Table          string    `json:"table" gorm:"size:255;not null"`
-	PivotTable     string    `json:"pivot_table" gorm:"size:255"`
-	ForeignKey     string    `json:"foreign_key" gorm:"size:255"`
-	RelatedKey     string    `json:"related_key" gorm:"size:255"`
-	ParentRelation string    `json:"parent_relation" gorm:"size:255"`
-	Active         *bool     `json:"active" gorm:"not null;default:true"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID         uint           `json:"id" gorm:"primaryKey"`
+	SyncJobID  uint           `json:"sync_job_id" gorm:"not null;index"`
+	ParentID   *uint          `json:"parent_id,omitempty" gorm:"index"`
+	Name       string         `json:"name" gorm:"size:255;not null"`
+	Type       string         `json:"type" gorm:"size:50;not null"`
+	Table      string         `json:"table" gorm:"size:255;not null"`
+	ForeignKey string         `json:"foreign_key" gorm:"size:255"`
+	RelatedKey string         `json:"related_key" gorm:"size:255"`
+	Config     datatypes.JSON `json:"config,omitempty" gorm:"type:json" swaggertype:"object"`
+	Active     *bool          `json:"active" gorm:"not null;default:true"`
+	Fields     []SyncJobField `json:"fields,omitempty" gorm:"foreignKey:SyncJobRelationID;constraint:OnDelete:CASCADE"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 func (r SyncJobRelation) IsActive() bool {
@@ -115,6 +118,7 @@ func (r SyncJobRelation) IsActive() bool {
 type SyncJobField struct {
 	ID                uint           `json:"id" gorm:"primaryKey"`
 	SyncJobID         uint           `json:"sync_job_id" gorm:"not null;index"`
+	SyncJobRelationID *uint          `json:"sync_job_relation_id,omitempty" gorm:"index"`
 	SourceName        string         `json:"source_name" gorm:"size:255;not null"`
 	DestinationName   string         `json:"destination_name" gorm:"size:255"`
 	DestinationType   string         `json:"destination_type" gorm:"size:50"`
