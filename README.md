@@ -43,6 +43,17 @@ Dev server (usually http://localhost:5173) proxies `/api` to the backend.
 
 See [frontend/README.md](frontend/README.md) for details.
 
+## Example dataset
+
+Large fake social graph (users / posts / comments / reactions) for sync demos:
+
+```bash
+make example-migrate   # create DB + tables
+make example-seed      # load seed data
+```
+
+See [exampleData/README.md](exampleData/README.md).
+
 ## Development
 
 Run both processes:

@@ -17,6 +17,7 @@ import (
 	"github.com/portico/backend/internal/handlers"
 	"github.com/portico/backend/internal/models"
 	"github.com/portico/backend/internal/router"
+	"github.com/portico/backend/internal/secretbox"
 	"github.com/portico/backend/internal/services/connection"
 	syncsvc "github.com/portico/backend/internal/services/sync"
 	"github.com/portico/backend/internal/services/syncjob"
@@ -67,9 +68,9 @@ func TestConnectionsCRUD(t *testing.T) {
 		"name": "mysql-src",
 		"type": "mysql",
 		"config": map[string]any{
-			"host": "localhost",
-			"port": 3306,
-			"user": "root",
+			"host":     "localhost",
+			"port":     3306,
+			"user":     "root",
 			"password": "secret",
 			"database": "app",
 		},
@@ -91,6 +92,9 @@ func TestConnectionsCRUD(t *testing.T) {
 	if created.ID == 0 || created.Name != "mysql-src" {
 		t.Fatalf("unexpected connection: %+v", created)
 	}
+	if bytes.Contains([]byte(fmt.Sprint(created)), []byte("secret")) || bytes.Contains(w.Body.Bytes(), []byte("secret")) {
+		t.Fatalf("create leaked password: %s", w.Body.String())
+	}
 
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/connections", nil)
@@ -105,8 +109,35 @@ func TestConnectionsCRUD(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("get: expected 200, got %d", w.Code)
 	}
+	if bytes.Contains(w.Body.Bytes(), []byte("secret")) {
+		t.Fatalf("get leaked password: %s", w.Body.String())
+	}
 
-	update := map[string]any{"name": "mysql-renamed"}
+	var stored models.Connection
+	if err := gdb.Session(&gorm.Session{SkipHooks: true}).First(&stored, created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(stored.Config, []byte("secret")) {
+		t.Fatalf("password stored in plaintext: %s", stored.Config)
+	}
+	var loaded models.Connection
+	if err := gdb.First(&loaded, created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(loaded.Config, []byte(`"password":"secret"`)) {
+		t.Fatalf("loaded config should decrypt the password: %s", loaded.Config)
+	}
+
+	update := map[string]any{
+		"name": "mysql-renamed",
+		"config": map[string]any{
+			"host":     "db.internal",
+			"port":     3306,
+			"user":     "root",
+			"password": "",
+			"database": "app",
+		},
+	}
 	up, _ := json.Marshal(update)
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, fmt.Sprintf("/connections/%d", created.ID), bytes.NewReader(up))
@@ -114,6 +145,19 @@ func TestConnectionsCRUD(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte("secret")) {
+		t.Fatalf("update leaked password: %s", w.Body.String())
+	}
+	if err := gdb.Session(&gorm.Session{SkipHooks: true}).First(&stored, created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	opened, err := secretbox.Open(stored.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(opened, []byte(`"password":"secret"`)) || !bytes.Contains(opened, []byte(`"host":"db.internal"`)) {
+		t.Fatalf("blank password update should keep the secret: %s", opened)
 	}
 
 	w = httptest.NewRecorder()
@@ -340,10 +384,10 @@ func TestSyncJobsAndLogs(t *testing.T) {
 }
 
 type mockSource struct {
-	schema      *connectors.TableSchema
-	rows        []map[string]any
-	schemas     map[string]*connectors.TableSchema
-	tableRows   map[string][]map[string]any
+	schema    *connectors.TableSchema
+	rows      []map[string]any
+	schemas   map[string]*connectors.TableSchema
+	tableRows map[string][]map[string]any
 }
 
 func (m *mockSource) Open(ctx context.Context) error { return nil }
@@ -355,6 +399,9 @@ func (m *mockSource) Schema(ctx context.Context, table string) (*connectors.Tabl
 		}
 	}
 	return m.schema, nil
+}
+func (m *mockSource) Count(ctx context.Context, table string) (int64, error) {
+	return int64(len(m.rows)), nil
 }
 func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
 	for i := 0; i < len(m.rows); i += chunkSize {
@@ -408,6 +455,7 @@ type mockDest struct {
 	prepared bool
 	batches  [][]map[string]any
 	config   json.RawMessage
+	onWrite  func([]map[string]any)
 }
 
 func (m *mockDest) Open(ctx context.Context) error { return nil }
@@ -422,7 +470,11 @@ func (m *mockDest) WriteBatch(ctx context.Context, name string, docs []map[strin
 	copy(copied, docs)
 	m.mu.Lock()
 	m.batches = append(m.batches, copied)
+	onWrite := m.onWrite
 	m.mu.Unlock()
+	if onWrite != nil {
+		onWrite(copied)
+	}
 	return nil
 }
 
@@ -522,6 +574,114 @@ func TestSyncRunWithMocks(t *testing.T) {
 	}
 	if len(dst.batches) == 0 {
 		t.Fatal("expected batches to be written")
+	}
+}
+
+func TestSyncRunUpdatesRowsSyncedAfterEachChunk(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name:   "dst",
+		Type:   "mock_dst",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "chunk-progress",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "applicants",
+		DestinationTable:        "applicants",
+		ChunkSize:               2,
+		ParallelCount:           1,
+		Config:                  datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "name", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "name": "a"},
+			{"id": 2, "name": "b"},
+			{"id": 3, "name": "c"},
+			{"id": 4, "name": "d"},
+		},
+	}
+
+	var snapshots []int64
+	var totals []int64
+	dst := &mockDest{
+		onWrite: func([]map[string]any) {
+			var logEntry models.SyncLog
+			if err := gdb.Order("id desc").First(&logEntry).Error; err != nil {
+				t.Errorf("load sync log: %v", err)
+				return
+			}
+			var synced int64
+			if logEntry.RowsSynced != nil {
+				synced = *logEntry.RowsSynced
+			}
+			var total int64
+			if logEntry.RowsTotal != nil {
+				total = *logEntry.RowsTotal
+			}
+			snapshots = append(snapshots, synced)
+			totals = append(totals, total)
+		},
+	}
+
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/run", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	if len(snapshots) != 2 {
+		t.Fatalf("expected 2 chunk snapshots, got %v", snapshots)
+	}
+	if snapshots[0] != 0 {
+		t.Fatalf("expected rows_synced=0 before the first chunk was recorded, got %d", snapshots[0])
+	}
+	if snapshots[1] != 2 {
+		t.Fatalf("expected rows_synced=2 after the first chunk, got %d", snapshots[1])
+	}
+	if totals[0] != 4 || totals[1] != 4 {
+		t.Fatalf("expected rows_total=4 while chunks were writing, got %v", totals)
+	}
+
+	var logEntry models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
+		t.Fatal(err)
+	}
+	if logEntry.RowsSynced == nil || *logEntry.RowsSynced != 4 {
+		t.Fatalf("expected final rows_synced=4, got %+v", logEntry.RowsSynced)
 	}
 }
 
@@ -654,6 +814,201 @@ func TestSyncRunWithRelations(t *testing.T) {
 	bobTags, ok := byID["2"]["tags"].([]map[string]any)
 	if !ok || len(bobTags) != 1 || fmt.Sprint(bobTags[0]["name"]) != "vip" {
 		t.Fatalf("expected Bob to have vip tag, got %#v", byID["2"]["tags"])
+	}
+}
+
+func TestSyncRunWithNestedHasMany(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name:   "dst",
+		Type:   "mock_dst",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "users-nested",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "users",
+		DestinationTable:        "users",
+		ChunkSize:               10,
+		ParallelCount:           1,
+		Relations: []models.SyncJobRelation{
+			{
+				Name:       "posts",
+				Type:       models.RelationTypeHasMany,
+				Table:      "posts",
+				ForeignKey: "user_id",
+			},
+			{
+				Name:           "comments",
+				Type:           models.RelationTypeHasMany,
+				Table:          "comments",
+				ForeignKey:     "post_id",
+				ParentRelation: "posts",
+			},
+			{
+				Name:           "reactions",
+				Type:           models.RelationTypeHasMany,
+				Table:          "reactions",
+				ForeignKey:     "comment_id",
+				ParentRelation: "comments",
+			},
+		},
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "username", Type: connectors.FieldTypeString},
+			},
+		},
+		schemas: map[string]*connectors.TableSchema{
+			"users": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "username", Type: connectors.FieldTypeString},
+				},
+			},
+			"posts": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "user_id", Type: connectors.FieldTypeInt64},
+					{Name: "title", Type: connectors.FieldTypeString},
+				},
+			},
+			"comments": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "post_id", Type: connectors.FieldTypeInt64},
+					{Name: "body", Type: connectors.FieldTypeString},
+				},
+			},
+			"reactions": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "comment_id", Type: connectors.FieldTypeInt64},
+					{Name: "type", Type: connectors.FieldTypeString},
+				},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "username": "ada"},
+			{"id": 2, "username": "bob"},
+		},
+		tableRows: map[string][]map[string]any{
+			"posts": {
+				{"id": 10, "user_id": 1, "title": "hello"},
+				{"id": 11, "user_id": 1, "title": "world"},
+				{"id": 20, "user_id": 2, "title": "bob-post"},
+			},
+			"comments": {
+				{"id": 100, "post_id": 10, "body": "nice"},
+				{"id": 101, "post_id": 10, "body": "cool"},
+				{"id": 200, "post_id": 20, "body": "hi"},
+			},
+			"reactions": {
+				{"id": 1000, "comment_id": 100, "type": "like"},
+				{"id": 1001, "comment_id": 100, "type": "smile"},
+			},
+		},
+	}
+	dst := &mockDest{}
+
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/run", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var logEntry models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
+		t.Fatal(err)
+	}
+	if logEntry.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", logEntry.Status, logEntry.Message)
+	}
+
+	var allDocs []map[string]any
+	for _, batch := range dst.batches {
+		allDocs = append(allDocs, batch...)
+	}
+	if len(allDocs) != 2 {
+		t.Fatalf("expected 2 docs, got %d", len(allDocs))
+	}
+
+	byID := map[string]map[string]any{}
+	for _, doc := range allDocs {
+		byID[fmt.Sprint(doc["id"])] = doc
+	}
+
+	adaPosts, ok := byID["1"]["posts"].([]map[string]any)
+	if !ok || len(adaPosts) != 2 {
+		t.Fatalf("expected Ada 2 posts, got %#v", byID["1"]["posts"])
+	}
+	var hello map[string]any
+	for _, p := range adaPosts {
+		if fmt.Sprint(p["title"]) == "hello" {
+			hello = p
+		}
+	}
+	if hello == nil {
+		t.Fatal("expected Ada post titled hello")
+	}
+	comments, ok := hello["comments"].([]map[string]any)
+	if !ok || len(comments) != 2 {
+		t.Fatalf("expected 2 comments on hello, got %#v", hello["comments"])
+	}
+	var nice map[string]any
+	for _, c := range comments {
+		if fmt.Sprint(c["body"]) == "nice" {
+			nice = c
+		}
+	}
+	if nice == nil {
+		t.Fatal("expected nice comment")
+	}
+	reactions, ok := nice["reactions"].([]map[string]any)
+	if !ok || len(reactions) != 2 {
+		t.Fatalf("expected 2 reactions on nice, got %#v", nice["reactions"])
+	}
+
+	bobPosts, ok := byID["2"]["posts"].([]map[string]any)
+	if !ok || len(bobPosts) != 1 {
+		t.Fatalf("expected Bob 1 post, got %#v", byID["2"]["posts"])
+	}
+	bobComments, ok := bobPosts[0]["comments"].([]map[string]any)
+	if !ok || len(bobComments) != 1 {
+		t.Fatalf("expected Bob 1 comment, got %#v", bobPosts[0]["comments"])
+	}
+	bobReactions, ok := bobComments[0]["reactions"].([]map[string]any)
+	if !ok || len(bobReactions) != 0 {
+		t.Fatalf("expected Bob comment 0 reactions, got %#v", bobComments[0]["reactions"])
 	}
 }
 

@@ -18,11 +18,12 @@ async function parseError(response) {
 }
 
 export async function request(path, options = {}) {
-  const { method = 'GET', body, headers = {} } = options
+  const { method = 'GET', body, headers = {}, cache } = options
   const init = {
     method,
     headers: { ...headers },
   }
+  if (cache) init.cache = cache
 
   if (body !== undefined) {
     init.headers['Content-Type'] = 'application/json'

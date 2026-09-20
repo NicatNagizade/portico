@@ -8,7 +8,10 @@ export const DESTINATION_TYPES = [
   { value: 'object_array', label: 'object_array' },
 ]
 
-export const RELATION_TYPES = [{ value: 'belongs_to_many', label: 'belongs_to_many' }]
+export const RELATION_TYPES = [
+  { value: 'belongs_to_many', label: 'belongs_to_many' },
+  { value: 'has_many', label: 'has_many' },
+]
 
 export function formatDate(value) {
   if (!value) return '—'

@@ -25,13 +25,14 @@ func NewService(db *gorm.DB) *Service {
 }
 
 type RelationInput struct {
-	Name       string `json:"name" binding:"required"`
-	Type       string `json:"type" binding:"required"`
-	Table      string `json:"table" binding:"required"`
-	PivotTable string `json:"pivot_table"`
-	ForeignKey string `json:"foreign_key"`
-	RelatedKey string `json:"related_key"`
-	Active     *bool  `json:"active"`
+	Name           string `json:"name" binding:"required"`
+	Type           string `json:"type" binding:"required"`
+	Table          string `json:"table" binding:"required"`
+	PivotTable     string `json:"pivot_table"`
+	ForeignKey     string `json:"foreign_key"`
+	RelatedKey     string `json:"related_key"`
+	ParentRelation string `json:"parent_relation"`
+	Active         *bool  `json:"active"`
 }
 
 type FieldInput struct {
@@ -222,6 +223,7 @@ func createRelations(tx *gorm.DB, syncJobID uint, relations []models.SyncJobRela
 		"PivotTable",
 		"ForeignKey",
 		"RelatedKey",
+		"ParentRelation",
 		"Active",
 	).Create(&relations).Error
 }
@@ -254,29 +256,80 @@ func buildRelations(inputs []RelationInput) ([]models.SyncJobRelation, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
+	names := make(map[string]struct{}, len(inputs))
+	for _, in := range inputs {
+		if in.Name == "" {
+			return nil, fmt.Errorf("%w: relation name is required", ErrInvalid)
+		}
+		if _, exists := names[in.Name]; exists {
+			return nil, fmt.Errorf("%w: duplicate relation name %q", ErrInvalid, in.Name)
+		}
+		names[in.Name] = struct{}{}
+	}
+
 	out := make([]models.SyncJobRelation, 0, len(inputs))
 	for _, in := range inputs {
-		if in.Type != models.RelationTypeBelongsToMany {
+		switch in.Type {
+		case models.RelationTypeBelongsToMany:
+			if in.PivotTable == "" {
+				return nil, fmt.Errorf("%w: pivot_table is required for relation %q", ErrInvalid, in.Name)
+			}
+		case models.RelationTypeHasMany:
+			// pivot_table and related_key are unused for has_many
+		default:
 			return nil, fmt.Errorf("%w: unsupported relation type %q", ErrInvalid, in.Type)
 		}
-		if in.PivotTable == "" {
-			return nil, fmt.Errorf("%w: pivot_table is required for relation %q", ErrInvalid, in.Name)
+		if in.ParentRelation != "" {
+			if _, ok := names[in.ParentRelation]; !ok {
+				return nil, fmt.Errorf("%w: parent_relation %q not found for relation %q", ErrInvalid, in.ParentRelation, in.Name)
+			}
+			if in.ParentRelation == in.Name {
+				return nil, fmt.Errorf("%w: relation %q cannot parent itself", ErrInvalid, in.Name)
+			}
 		}
 		active := true
 		if in.Active != nil {
 			active = *in.Active
 		}
 		out = append(out, models.SyncJobRelation{
-			Name:       in.Name,
-			Type:       in.Type,
-			Table:      in.Table,
-			PivotTable: in.PivotTable,
-			ForeignKey: in.ForeignKey,
-			RelatedKey: in.RelatedKey,
-			Active:     &active,
+			Name:           in.Name,
+			Type:           in.Type,
+			Table:          in.Table,
+			PivotTable:     in.PivotTable,
+			ForeignKey:     in.ForeignKey,
+			RelatedKey:     in.RelatedKey,
+			ParentRelation: in.ParentRelation,
+			Active:         &active,
 		})
 	}
+	if err := validateRelationParents(out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// validateRelationParents rejects cycles in parent_relation chains.
+func validateRelationParents(rels []models.SyncJobRelation) error {
+	byName := make(map[string]models.SyncJobRelation, len(rels))
+	for _, r := range rels {
+		byName[r.Name] = r
+	}
+	for _, r := range rels {
+		seen := map[string]struct{}{r.Name: {}}
+		cur := r.ParentRelation
+		for cur != "" {
+			if _, loop := seen[cur]; loop {
+				return fmt.Errorf("%w: cyclic parent_relation involving %q", ErrInvalid, r.Name)
+			}
+			parent, ok := byName[cur]
+			if !ok {
+				return fmt.Errorf("%w: parent_relation %q not found for relation %q", ErrInvalid, cur, r.Name)
+			}
+			seen[cur] = struct{}{}
+			cur = parent.ParentRelation
+		}
+	}
+	return nil
 }
 
 func buildFields(inputs []FieldInput) ([]models.SyncJobField, error) {

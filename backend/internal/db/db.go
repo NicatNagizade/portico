@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/portico/backend/internal/config"
 	"github.com/portico/backend/internal/models"
+	"github.com/portico/backend/internal/secretbox"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -36,8 +37,28 @@ func Connect(driver, dsn string) (*gorm.DB, error) {
 	if err := gdb.AutoMigrate(&models.Connection{}, &models.SyncJob{}, &models.SyncJobRelation{}, &models.SyncJobField{}, &models.SyncLog{}); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
+	if err := sealPlaintextConnectionConfigs(gdb); err != nil {
+		return nil, fmt.Errorf("seal connection configs: %w", err)
+	}
 
 	return gdb, nil
+}
+
+// sealPlaintextConnectionConfigs encrypts secret fields on rows written before encryption existed.
+func sealPlaintextConnectionConfigs(gdb *gorm.DB) error {
+	var items []models.Connection
+	if err := gdb.Session(&gorm.Session{SkipHooks: true}).Find(&items).Error; err != nil {
+		return err
+	}
+	for i := range items {
+		if !secretbox.NeedsSeal(items[i].Config) {
+			continue
+		}
+		if err := gdb.Save(&items[i]).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Open ensures the configured Postgres database exists, then connects and auto-migrates.

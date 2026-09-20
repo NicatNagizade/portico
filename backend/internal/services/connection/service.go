@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/portico/backend/internal/models"
+	"github.com/portico/backend/internal/secretbox"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -74,7 +75,11 @@ func (s *Service) Update(id uint, in UpdateInput) (*models.Connection, error) {
 		item.Type = *in.Type
 	}
 	if len(in.Config) > 0 {
-		item.Config = datatypes.JSON(in.Config)
+		merged, err := secretbox.Merge(item.Config, in.Config)
+		if err != nil {
+			return nil, err
+		}
+		item.Config = merged
 	}
 	if err := s.db.Save(item).Error; err != nil {
 		return nil, err

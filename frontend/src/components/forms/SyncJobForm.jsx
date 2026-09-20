@@ -63,6 +63,7 @@ export default function SyncJobForm({
       pivot_table: r.pivot_table || '',
       foreign_key: r.foreign_key || '',
       related_key: r.related_key || '',
+      parent_relation: r.parent_relation || '',
       active: r.active !== false,
     })),
   )
@@ -115,6 +116,7 @@ export default function SyncJobForm({
           pivot_table: r.pivot_table?.trim() || undefined,
           foreign_key: r.foreign_key?.trim() || undefined,
           related_key: r.related_key?.trim() || undefined,
+          parent_relation: r.parent_relation?.trim() || undefined,
           active: r.active !== false,
         })),
     }

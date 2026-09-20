@@ -3,17 +3,16 @@ import { Link } from 'react-router-dom'
 import { deleteSyncJob, listSyncJobs, runSyncJob } from '../api/syncJobs'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
-  DangerButton,
   EmptyState,
   ErrorBanner,
-  GhostButton,
+  IconButton,
+  iconButtonClass,
   ListRow,
   ListStack,
   LoadingState,
   MetaChip,
   PageHeader,
   PrimaryButton,
-  SecondaryButton,
   SuccessBanner,
 } from '../components/ui'
 import { formatDate } from '../lib/destinationTypes'
@@ -23,6 +22,88 @@ function Arrow() {
     <span className="mx-1 inline-flex text-[var(--text-muted)]" aria-hidden="true">
       →
     </span>
+  )
+}
+
+function Icon({ children }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      {children}
+    </svg>
+  )
+}
+
+function OpenIcon() {
+  return (
+    <Icon>
+      <path
+        d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+      />
+      <circle cx="12" cy="12" r="2.75" stroke="currentColor" strokeWidth="1.75" />
+    </Icon>
+  )
+}
+
+function EditIcon() {
+  return (
+    <Icon>
+      <path
+        d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinejoin="round"
+      />
+      <path d="m13.5 6.5 3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </Icon>
+  )
+}
+
+function PlayIcon() {
+  return (
+    <Icon>
+      <path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor" />
+    </Icon>
+  )
+}
+
+function SpinnerIcon() {
+  return (
+    <svg
+      className="animate-spin"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="2" opacity="0.35" />
+      <path d="M12 4a8 8 0 0 1 8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function LogsIcon() {
+  return (
+    <Icon>
+      <path d="M5 4h14v16H5V4Z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
+      <path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </Icon>
+  )
+}
+
+function DeleteIcon() {
+  return (
+    <Icon>
+      <path
+        d="M4 7h16M9 7V5h6v2M6.5 7l.8 13h9.4l.8-13"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Icon>
   )
 }
 
@@ -140,23 +221,46 @@ export default function SyncJobsPage() {
                   Updated {formatDate(item.updated_at)}
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2 sm:justify-end">
-                <Link to={`/sync-jobs/${item.id}`}>
-                  <SecondaryButton>Open</SecondaryButton>
+              <div className="flex shrink-0 items-center gap-px self-start rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-0.5 sm:self-center">
+                <Link
+                  to={`/sync-jobs/${item.id}`}
+                  title="Open"
+                  aria-label={`Open ${item.name}`}
+                  className={iconButtonClass()}
+                >
+                  <OpenIcon />
                 </Link>
-                <Link to={`/sync-jobs/${item.id}/edit`}>
-                  <SecondaryButton>Edit</SecondaryButton>
+                <Link
+                  to={`/sync-jobs/${item.id}/edit`}
+                  title="Edit"
+                  aria-label={`Edit ${item.name}`}
+                  className={iconButtonClass()}
+                >
+                  <EditIcon />
                 </Link>
-                <PrimaryButton
+                <IconButton
+                  label={runningId === item.id ? 'Running' : 'Run'}
+                  tone="accent"
                   onClick={() => handleRun(item)}
                   disabled={runningId === item.id}
                 >
-                  {runningId === item.id ? 'Running…' : 'Run'}
-                </PrimaryButton>
-                <Link to={`/sync-logs?sync_job_id=${item.id}`}>
-                  <GhostButton>Logs</GhostButton>
+                  {runningId === item.id ? <SpinnerIcon /> : <PlayIcon />}
+                </IconButton>
+                <Link
+                  to={`/sync-logs?sync_job_id=${item.id}`}
+                  title="Logs"
+                  aria-label={`Logs for ${item.name}`}
+                  className={iconButtonClass()}
+                >
+                  <LogsIcon />
                 </Link>
-                <DangerButton onClick={() => setPendingDelete(item)}>Delete</DangerButton>
+                <IconButton
+                  label="Delete"
+                  tone="danger"
+                  onClick={() => setPendingDelete(item)}
+                >
+                  <DeleteIcon />
+                </IconButton>
               </div>
             </ListRow>
           ))}

@@ -60,6 +60,21 @@ func TestAssembleBelongsToMany(t *testing.T) {
 	}
 }
 
+func TestAssembleHasMany(t *testing.T) {
+	children := []map[string]any{
+		{"id": 10, "user_id": 1, "title": "a"},
+		{"id": 11, "user_id": 1, "title": "b"},
+		{"id": 12, "user_id": 2, "title": "c"},
+	}
+	grouped := syncsvc.AssembleHasMany(children, "user_id")
+	if len(grouped["1"]) != 2 {
+		t.Fatalf("user 1: want 2 posts, got %d", len(grouped["1"]))
+	}
+	if len(grouped["2"]) != 1 || grouped["2"][0]["title"] != "c" {
+		t.Fatalf("user 2: unexpected %#v", grouped["2"])
+	}
+}
+
 func TestSchemaWithRelationsSkipsInactive(t *testing.T) {
 	falseVal := false
 	trueVal := true
@@ -71,8 +86,25 @@ func TestSchemaWithRelationsSkipsInactive(t *testing.T) {
 	got := syncsvc.SchemaWithRelations(base, []models.SyncJobRelation{
 		{Name: "tags", Type: models.RelationTypeBelongsToMany, Active: &trueVal},
 		{Name: "skills", Type: models.RelationTypeBelongsToMany, Active: &falseVal},
+		{Name: "comments", Type: models.RelationTypeHasMany, ParentRelation: "posts", Active: &trueVal},
 	})
 	if len(got.Columns) != 2 || got.Columns[1].Name != "tags" {
-		t.Fatalf("expected only active relation in schema, got %+v", got.Columns)
+		t.Fatalf("expected only active root relation in schema, got %+v", got.Columns)
 	}
 }
+
+func TestSchemaWithRelationsIncludesHasManyRoot(t *testing.T) {
+	trueVal := true
+	base := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+		},
+	}
+	got := syncsvc.SchemaWithRelations(base, []models.SyncJobRelation{
+		{Name: "posts", Type: models.RelationTypeHasMany, Active: &trueVal},
+	})
+	if len(got.Columns) != 2 || got.Columns[1].Name != "posts" || got.Columns[1].Type != connectors.FieldTypeObjectArray {
+		t.Fatalf("expected posts object_array, got %+v", got.Columns)
+	}
+}
+

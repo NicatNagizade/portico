@@ -2,12 +2,14 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/portico/backend/internal/config"
 	"github.com/portico/backend/internal/connectors/register"
 	"github.com/portico/backend/internal/db"
 	"github.com/portico/backend/internal/handlers"
 	"github.com/portico/backend/internal/router"
+	"github.com/portico/backend/internal/secretbox"
 	"github.com/portico/backend/internal/services/connection"
 	"github.com/portico/backend/internal/services/sync"
 	"github.com/portico/backend/internal/services/syncjob"
@@ -22,6 +24,11 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	// APP_KEY stays in process memory. It is never written to the database.
+	secretbox.SetKey(os.Getenv("APP_KEY"))
+	if secretbox.UsingDevKey() {
+		log.Printf("warning: APP_KEY is unset; connection secrets use the development key")
 	}
 
 	gdb, err := db.Open(cfg)

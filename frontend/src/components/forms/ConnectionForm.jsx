@@ -109,23 +109,29 @@ export default function ConnectionForm({ initial, onSubmit, busy, submitLabel })
           </Field>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
-            {fields.map((field) => (
-              <Field key={field.key} label={field.label}>
-                <input
-                  className={inputClassName}
-                  type={
-                    field.type === 'password'
-                      ? 'password'
-                      : field.type === 'number'
-                        ? 'number'
-                        : 'text'
-                  }
-                  required={field.required}
-                  value={config[field.key] ?? ''}
-                  onChange={(e) => updateConfigField(field.key, e.target.value, field.type)}
-                />
-              </Field>
-            ))}
+            {fields.map((field) => {
+              const isSecret = field.type === 'password'
+              const keepExisting = Boolean(initial) && isSecret
+              return (
+                <Field
+                  key={field.key}
+                  label={field.label}
+                  hint={keepExisting ? 'Leave blank to keep the current value.' : undefined}
+                >
+                  <input
+                    className={inputClassName}
+                    type={
+                      isSecret ? 'password' : field.type === 'number' ? 'number' : 'text'
+                    }
+                    required={field.required && !keepExisting}
+                    autoComplete={isSecret ? 'new-password' : undefined}
+                    placeholder={keepExisting ? 'Unchanged' : undefined}
+                    value={config[field.key] ?? ''}
+                    onChange={(e) => updateConfigField(field.key, e.target.value, field.type)}
+                  />
+                </Field>
+              )
+            })}
           </div>
         )}
       </div>

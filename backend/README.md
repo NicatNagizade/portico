@@ -37,6 +37,7 @@ API listens on `HTTP_ADDR` (default `:8080`).
 | `DB_PASSWORD` | App DB password | `postgres` |
 | `DB_NAME` | App DB name | `portico` |
 | `DB_SSLMODE` | SSL mode | `disable` |
+| `APP_KEY` | Application secret used to encrypt connection passwords and API keys at rest. It is not stored in the database. Empty uses a development key. Changing it makes existing secrets unreadable. | |
 
 ## Swagger
 
@@ -111,7 +112,7 @@ Sources and destinations live under `internal/connectors/`. Implement `SourceRea
 
 ## Example: sync with related tables
 
-Many-to-many relations (e.g. applicants ↔ tags via `applicant_tags`) are configured on the sync job. Related rows are loaded with separate queries (no JOINs) and attached as a Typesense `object[]` field.
+Many-to-many relations (e.g. applicants ↔ tags via `applicant_tags`) use `belongs_to_many` with a pivot table. One-to-many FK children use `has_many`. Nest deeper levels with `parent_relation` (name of another relation on the same job). Related rows are loaded with separate queries (no JOINs) and attached as Typesense `object[]` fields.
 
 ```bash
 curl -X POST http://localhost:8080/sync-jobs \
@@ -147,13 +148,95 @@ curl -X POST http://localhost:8080/sync-jobs \
   }'
 ```
 
+### ExampleData: nested users → posts → comments → reactions
+
+Connect the seeded Postgres DB (`exampleData`, default `portico_test` / `portico_example`) as a Postgres source, then sync `users` with nested `has_many` relations. Keep Typesense `enable_nested_fields: true`.
+
+```bash
+# 1) Postgres source → exampleData DB
+curl -X POST http://localhost:8080/connections \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "exampledata-postgres",
+    "type": "postgres",
+    "config": {
+      "host": "localhost",
+      "port": 5432,
+      "user": "user",
+      "password": "password",
+      "database": "portico_test",
+      "sslmode": "disable"
+    }
+  }'
+
+# 2) Sync job (replace connection IDs)
+curl -X POST http://localhost:8080/sync-jobs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "users-nested-social",
+    "source_connection_id": 1,
+    "destination_connection_id": 2,
+    "source_table": "users",
+    "destination_table": "users",
+    "chunk_size": 100,
+    "config": {
+      "default_sorting_field": "id",
+      "enable_nested_fields": true
+    },
+    "relations": [
+      {
+        "name": "posts",
+        "type": "has_many",
+        "table": "posts",
+        "foreign_key": "user_id"
+      },
+      {
+        "name": "comments",
+        "type": "has_many",
+        "table": "comments",
+        "foreign_key": "post_id",
+        "parent_relation": "posts"
+      },
+      {
+        "name": "reactions",
+        "type": "has_many",
+        "table": "reactions",
+        "foreign_key": "comment_id",
+        "parent_relation": "comments"
+      }
+    ]
+  }'
+```
+
+Document shape after sync:
+
+```json
+{
+  "id": "1",
+  "username": "user_1",
+  "posts": [
+    {
+      "id": 10,
+      "title": "...",
+      "comments": [
+        {
+          "id": 100,
+          "body": "...",
+          "reactions": [{"id": 1, "type": "like"}]
+        }
+      ]
+    }
+  ]
+}
+```
+
 Optional per-field overrides live in `fields`. With no rows, columns pass through unchanged. An active row can rename via `destination_name` and override the destination schema type via `destination_type` (`string`, `int64`, `float64`, `bool`, `object`, `object_array`). `active: false` excludes the field from the destination schema and imported documents. Opaque `destination_config` is stored for future destination-specific options.
 
-Relations support the same `active` flag: `active: false` skips enrichment and omits that relation from the destination schema. Omit `active` (or set `true`) to keep the relation enabled.
+Relations support the same `active` flag: `active: false` skips enrichment and omits that relation from the destination schema (root-level only; nested relations are not listed in the destination schema and rely on `enable_nested_fields`). Omit `active` (or set `true`) to keep the relation enabled.
 
 Optional sync-job `config` is opaque JSON interpreted by the destination connector. Omit it (or any key) to keep that connector's defaults. For Typesense: `default_sorting_field`, `enable_nested_fields` (default `true`), `symbols_to_index`, `token_separators`. Other connectors can define their own keys.
 
-Omitting `foreign_key` / `related_key` defaults them to `{singular(source_table)}_id` and `{singular(related_table)}_id` (e.g. `applicant_id`, `tag_id`). All columns from the related table are included. After sync, each applicant document looks like:
+Omitting `foreign_key` / `related_key` defaults them to `{singular(parent_table)}_id` and `{singular(related_table)}_id` (e.g. `applicant_id`, `tag_id`). For nested `has_many`, the parent table is the parent relation’s `table`. All columns from the related table are included. After a `belongs_to_many` sync, each applicant document looks like:
 
 ```json
 {

@@ -1,6 +1,10 @@
 package sync
 
 import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/models"
 )
@@ -39,7 +43,7 @@ func SchemaWithFields(base *connectors.TableSchema, fields []models.SyncJobField
 	return out
 }
 
-// ApplyFields renames or drops document fields according to sync job field rules.
+// ApplyFields renames, drops, or type-coerces document fields according to sync job field rules.
 func ApplyFields(docs []map[string]any, fields []models.SyncJobField) {
 	rules := fieldRulesBySource(fields)
 	if len(rules) == 0 {
@@ -51,18 +55,81 @@ func ApplyFields(docs []map[string]any, fields []models.SyncJobField) {
 				delete(doc, sourceName)
 				continue
 			}
-			destName := destinationFieldName(rule)
-			if destName == "" || destName == sourceName {
-				continue
-			}
 			val, ok := doc[sourceName]
 			if !ok {
 				continue
 			}
+			if rule.DestinationType != "" {
+				val = coerceValue(val, connectors.FieldType(rule.DestinationType))
+			}
+			destName := destinationFieldName(rule)
 			doc[destName] = val
-			delete(doc, sourceName)
+			if destName != sourceName {
+				delete(doc, sourceName)
+			}
 		}
 	}
+}
+
+func coerceValue(v any, t connectors.FieldType) any {
+	if v == nil {
+		return nil
+	}
+	switch t {
+	case connectors.FieldTypeString:
+		switch x := v.(type) {
+		case string:
+			return x
+		case []byte:
+			return string(x)
+		case map[string]any, []any, []map[string]any:
+			if b, err := json.Marshal(x); err == nil {
+				return string(b)
+			}
+		}
+		return fmt.Sprint(v)
+
+	case connectors.FieldTypeInt64:
+		if n, err := strconv.ParseInt(fmt.Sprint(v), 10, 64); err == nil {
+			return n
+		}
+
+	case connectors.FieldTypeFloat64:
+		if f, err := strconv.ParseFloat(fmt.Sprint(v), 64); err == nil {
+			return f
+		}
+
+	case connectors.FieldTypeBool:
+		if b, err := strconv.ParseBool(fmt.Sprint(v)); err == nil {
+			return b
+		}
+
+	case connectors.FieldTypeObject:
+		var out map[string]any
+		if unmarshalJSON(v, &out) {
+			return out
+		}
+
+	case connectors.FieldTypeObjectArray:
+		var out []map[string]any
+		if unmarshalJSON(v, &out) {
+			return out
+		}
+	}
+	return v
+}
+
+func unmarshalJSON(v any, dest any) bool {
+	var b []byte
+	switch x := v.(type) {
+	case string:
+		b = []byte(x)
+	case []byte:
+		b = x
+	default:
+		return false
+	}
+	return json.Unmarshal(b, dest) == nil
 }
 
 func fieldRulesBySource(fields []models.SyncJobField) map[string]models.SyncJobField {

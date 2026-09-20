@@ -71,6 +71,25 @@ func TestApplyFields(t *testing.T) {
 	}
 }
 
+func TestApplyFieldsCoerceDestinationType(t *testing.T) {
+	docs := []map[string]any{
+		{"id": "1", "form": 42, "meta": map[string]any{"a": 1}, "score": "3.5"},
+	}
+	fields := []models.SyncJobField{
+		{SourceName: "form", DestinationType: string(connectors.FieldTypeString), Active: boolPtr(true)},
+		{SourceName: "meta", DestinationType: string(connectors.FieldTypeString), Active: boolPtr(true)},
+		{SourceName: "score", DestinationType: string(connectors.FieldTypeFloat64), Active: boolPtr(true)},
+	}
+	syncsvc.ApplyFields(docs, fields)
+
+	want := []map[string]any{
+		{"id": "1", "form": "42", "meta": `{"a":1}`, "score": 3.5},
+	}
+	if !reflect.DeepEqual(docs, want) {
+		t.Fatalf("ApplyFields coerce mismatch\ngot  %+v\nwant %+v", docs, want)
+	}
+}
+
 func TestApplyFieldsNoop(t *testing.T) {
 	docs := []map[string]any{{"id": "1", "name": "Ada"}}
 	syncsvc.ApplyFields(docs, nil)

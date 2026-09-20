@@ -91,6 +91,15 @@ func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSch
 	return schema, nil
 }
 
+func (s *Source) Count(ctx context.Context, table string) (int64, error) {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdent(table))
+	var n int64
+	if err := s.db.QueryRowContext(ctx, query).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
 	query := fmt.Sprintf("SELECT * FROM %s", quoteIdent(table))
 	return sqlutil.ReadChunks(ctx, s.db, query, chunkSize, fn)

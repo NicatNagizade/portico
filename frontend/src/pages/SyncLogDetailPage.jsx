@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getSyncLog } from '../api/syncLogs'
 import StatusBadge from '../components/StatusBadge'
+import SyncProgress from '../components/SyncProgress'
 import {
   ErrorBanner,
   LoadingState,
@@ -77,14 +78,13 @@ export default function SyncLogDetailPage() {
 
       <ErrorBanner message={error} />
 
-      <div className="animate-fade-up mb-4 flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]">
-        <StatusBadge status={log.status} />
-        <MetaChip>
-          {log.rows_synced ?? '—'}
-          {log.rows_total != null ? ` / ${log.rows_total}` : ''} rows
-        </MetaChip>
-        <MetaChip>{formatDuration(log.duration_ms)}</MetaChip>
-        <MetaChip>started {formatDate(log.started_at)}</MetaChip>
+      <div className="animate-fade-up mb-4 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <StatusBadge status={log.status} />
+          <MetaChip>{formatDuration(log.duration_ms)}</MetaChip>
+          <MetaChip>started {formatDate(log.started_at)}</MetaChip>
+        </div>
+        <SyncProgress log={log} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

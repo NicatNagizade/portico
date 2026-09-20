@@ -5,7 +5,7 @@ export function listSyncLogs(syncJobId) {
     syncJobId !== undefined && syncJobId !== null && syncJobId !== ''
       ? `?sync_job_id=${encodeURIComponent(syncJobId)}`
       : ''
-  return request(`/sync-logs${query}`)
+  return request(`/sync-logs${query}`, { cache: 'no-store' })
 }
 
 export function getSyncLog(id) {

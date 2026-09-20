@@ -105,15 +105,33 @@ func AssembleBelongsToMany(
 	return out
 }
 
+// AssembleHasMany groups child rows by foreign key column.
+func AssembleHasMany(childRows []map[string]any, foreignKey string) map[string][]map[string]any {
+	out := make(map[string][]map[string]any)
+	for _, row := range childRows {
+		parentVal, ok := row[foreignKey]
+		if !ok || parentVal == nil {
+			continue
+		}
+		copied := make(map[string]any, len(row))
+		for k, v := range row {
+			copied[k] = v
+		}
+		parentID := fmt.Sprint(parentVal)
+		out[parentID] = append(out[parentID], copied)
+	}
+	return out
+}
+
 func enrichBelongsToMany(
 	ctx context.Context,
 	src connectors.SourceReader,
-	sourceTable string,
+	parentTable string,
 	parentSchema *connectors.TableSchema,
 	docs []map[string]any,
 	rel models.SyncJobRelation,
 ) error {
-	rel = ResolveRelationKeys(sourceTable, rel)
+	rel = ResolveRelationKeys(parentTable, rel)
 	if rel.PivotTable == "" {
 		return fmt.Errorf("relation %q: pivot_table is required", rel.Name)
 	}
@@ -173,6 +191,159 @@ func enrichBelongsToMany(
 	return nil
 }
 
+func enrichHasMany(
+	ctx context.Context,
+	src connectors.SourceReader,
+	parentTable string,
+	parentSchema *connectors.TableSchema,
+	docs []map[string]any,
+	rel models.SyncJobRelation,
+) error {
+	rel = ResolveRelationKeys(parentTable, rel)
+
+	parentPK, err := primaryKeyColumn(parentSchema)
+	if err != nil {
+		return fmt.Errorf("relation %q parent: %w", rel.Name, err)
+	}
+	ids := parentIDs(docs, parentPK)
+	for _, doc := range docs {
+		doc[rel.Name] = []map[string]any{}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	childRows, err := src.QueryRows(ctx, rel.Table, nil, rel.ForeignKey, ids)
+	if err != nil {
+		return fmt.Errorf("relation %q child query: %w", rel.Name, err)
+	}
+
+	grouped := AssembleHasMany(childRows, rel.ForeignKey)
+	for _, doc := range docs {
+		pid := fmt.Sprint(doc[parentPK])
+		if rows, ok := grouped[pid]; ok {
+			doc[rel.Name] = rows
+		}
+	}
+	return nil
+}
+
+// orderRelationsByParent returns active relations in dependency order (parents before children).
+func orderRelationsByParent(relations []models.SyncJobRelation) ([]models.SyncJobRelation, error) {
+	active := make([]models.SyncJobRelation, 0, len(relations))
+	byName := make(map[string]models.SyncJobRelation, len(relations))
+	for _, rel := range relations {
+		if !rel.IsActive() {
+			continue
+		}
+		active = append(active, rel)
+		byName[rel.Name] = rel
+	}
+	if len(active) == 0 {
+		return nil, nil
+	}
+
+	depthOf := map[string]int{}
+	var depth func(name string, stack map[string]struct{}) (int, error)
+	depth = func(name string, stack map[string]struct{}) (int, error) {
+		if d, ok := depthOf[name]; ok {
+			return d, nil
+		}
+		if _, loop := stack[name]; loop {
+			return 0, fmt.Errorf("cyclic parent_relation involving %q", name)
+		}
+		rel, ok := byName[name]
+		if !ok {
+			return 0, fmt.Errorf("parent_relation %q not found", name)
+		}
+		if rel.ParentRelation == "" {
+			depthOf[name] = 0
+			return 0, nil
+		}
+		stack[name] = struct{}{}
+		parentDepth, err := depth(rel.ParentRelation, stack)
+		delete(stack, name)
+		if err != nil {
+			return 0, err
+		}
+		d := parentDepth + 1
+		depthOf[name] = d
+		return d, nil
+	}
+
+	type scored struct {
+		rel   models.SyncJobRelation
+		depth int
+		idx   int
+	}
+	scoredRels := make([]scored, 0, len(active))
+	for i, rel := range active {
+		d, err := depth(rel.Name, map[string]struct{}{})
+		if err != nil {
+			return nil, err
+		}
+		scoredRels = append(scoredRels, scored{rel: rel, depth: d, idx: i})
+	}
+	// Stable sort by depth, then original index.
+	for i := 0; i < len(scoredRels); i++ {
+		for j := i + 1; j < len(scoredRels); j++ {
+			if scoredRels[j].depth < scoredRels[i].depth ||
+				(scoredRels[j].depth == scoredRels[i].depth && scoredRels[j].idx < scoredRels[i].idx) {
+				scoredRels[i], scoredRels[j] = scoredRels[j], scoredRels[i]
+			}
+		}
+	}
+	out := make([]models.SyncJobRelation, len(scoredRels))
+	for i, s := range scoredRels {
+		out[i] = s.rel
+	}
+	return out, nil
+}
+
+// collectRelationDocs returns all nested maps under relationName across root docs.
+func collectRelationDocs(rootDocs []map[string]any, relationName string) []map[string]any {
+	var out []map[string]any
+	var walk func(doc map[string]any)
+	walk = func(doc map[string]any) {
+		for key, val := range doc {
+			arr, ok := val.([]map[string]any)
+			if !ok {
+				continue
+			}
+			if key == relationName {
+				out = append(out, arr...)
+			}
+			for _, child := range arr {
+				walk(child)
+			}
+		}
+	}
+	for _, doc := range rootDocs {
+		walk(doc)
+	}
+	return out
+}
+
+func relationByName(relations []models.SyncJobRelation, name string) (models.SyncJobRelation, bool) {
+	for _, rel := range relations {
+		if rel.Name == name {
+			return rel, true
+		}
+	}
+	return models.SyncJobRelation{}, false
+}
+
+func parentTableForRelation(job *models.SyncJob, rel models.SyncJobRelation) (string, error) {
+	if rel.ParentRelation == "" {
+		return job.SourceTable, nil
+	}
+	parent, ok := relationByName(job.Relations, rel.ParentRelation)
+	if !ok {
+		return "", fmt.Errorf("parent_relation %q not found for relation %q", rel.ParentRelation, rel.Name)
+	}
+	return parent.Table, nil
+}
+
 func enrichDocs(
 	ctx context.Context,
 	src connectors.SourceReader,
@@ -180,13 +351,46 @@ func enrichDocs(
 	parentSchema *connectors.TableSchema,
 	docs []map[string]any,
 ) error {
-	for _, rel := range job.Relations {
-		if !rel.IsActive() {
-			continue
+	ordered, err := orderRelationsByParent(job.Relations)
+	if err != nil {
+		return err
+	}
+
+	schemaCache := map[string]*connectors.TableSchema{
+		job.SourceTable: parentSchema,
+	}
+
+	for _, rel := range ordered {
+		parentTable, err := parentTableForRelation(job, rel)
+		if err != nil {
+			return err
 		}
+
+		var targets []map[string]any
+		var schema *connectors.TableSchema
+		if rel.ParentRelation == "" {
+			targets = docs
+			schema = parentSchema
+		} else {
+			targets = collectRelationDocs(docs, rel.ParentRelation)
+			if cached, ok := schemaCache[parentTable]; ok {
+				schema = cached
+			} else {
+				schema, err = src.Schema(ctx, parentTable)
+				if err != nil {
+					return fmt.Errorf("relation %q parent schema: %w", rel.Name, err)
+				}
+				schemaCache[parentTable] = schema
+			}
+		}
+
 		switch rel.Type {
 		case models.RelationTypeBelongsToMany:
-			if err := enrichBelongsToMany(ctx, src, job.SourceTable, parentSchema, docs, rel); err != nil {
+			if err := enrichBelongsToMany(ctx, src, parentTable, schema, targets, rel); err != nil {
+				return err
+			}
+		case models.RelationTypeHasMany:
+			if err := enrichHasMany(ctx, src, parentTable, schema, targets, rel); err != nil {
 				return err
 			}
 		default:
@@ -196,7 +400,8 @@ func enrichDocs(
 	return nil
 }
 
-// SchemaWithRelations appends active relation columns onto a base table schema.
+// SchemaWithRelations appends active root-level relation columns onto a base table schema.
+// Nested relations (parent_relation set) are omitted; Typesense indexes them via enable_nested_fields.
 func SchemaWithRelations(base *connectors.TableSchema, relations []models.SyncJobRelation) *connectors.TableSchema {
 	out := &connectors.TableSchema{
 		Columns: make([]connectors.ColumnSchema, len(base.Columns), len(base.Columns)+len(relations)),
@@ -204,6 +409,9 @@ func SchemaWithRelations(base *connectors.TableSchema, relations []models.SyncJo
 	copy(out.Columns, base.Columns)
 	for _, rel := range relations {
 		if !rel.IsActive() {
+			continue
+		}
+		if rel.ParentRelation != "" {
 			continue
 		}
 		out.Columns = append(out.Columns, connectors.ColumnSchema{

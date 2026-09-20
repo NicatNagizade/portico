@@ -125,6 +125,37 @@ export function DangerButton({ children, className = '', ...props }) {
   )
 }
 
+const iconButtonTones = {
+  default:
+    'text-[var(--text-muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]',
+  accent:
+    'text-[var(--accent)] hover:bg-[var(--accent-soft)]',
+  danger:
+    'text-[var(--danger)] hover:bg-[var(--danger-soft)]',
+}
+
+export function iconButtonClass(tone = 'default', className = '') {
+  return [
+    'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50',
+    iconButtonTones[tone] || iconButtonTones.default,
+    className,
+  ].join(' ')
+}
+
+export function IconButton({ label, tone = 'default', children, className = '', ...props }) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      className={iconButtonClass(tone, className)}
+      {...props}
+    >
+      {children}
+    </button>
+  )
+}
+
 export function GhostButton({ children, className = '', ...props }) {
   return (
     <button

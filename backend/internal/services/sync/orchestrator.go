@@ -34,7 +34,7 @@ func (o *Orchestrator) Run(ctx context.Context, jobID uint) (*models.SyncLog, er
 		return nil, err
 	}
 
-	rowsTotal, rowsSynced, runErr := o.execute(ctx, jobID)
+	rowsTotal, rowsSynced, runErr := o.execute(ctx, jobID, logEntry.ID)
 	finished := time.Now()
 	duration := finished.Sub(started).Milliseconds()
 	logEntry.FinishedAt = &finished
@@ -56,7 +56,7 @@ func (o *Orchestrator) Run(ctx context.Context, jobID uint) (*models.SyncLog, er
 	return &logEntry, runErr
 }
 
-func (o *Orchestrator) execute(ctx context.Context, jobID uint) (rowsTotal, rowsSynced int64, err error) {
+func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint) (rowsTotal, rowsSynced int64, err error) {
 	var job models.SyncJob
 	if err := o.db.
 		Preload("SourceConnection").
@@ -98,6 +98,14 @@ func (o *Orchestrator) execute(ctx context.Context, jobID uint) (rowsTotal, rows
 		return 0, 0, fmt.Errorf("prepare destination: %w", err)
 	}
 
+	sourceTotal, err := src.Count(ctx, job.SourceTable)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count source rows: %w", err)
+	}
+	if err := o.recordRowsTotal(logID, sourceTotal); err != nil {
+		return 0, 0, fmt.Errorf("update rows_total: %w", err)
+	}
+
 	chunkSize := job.ChunkSize
 	if chunkSize <= 0 {
 		chunkSize = 500
@@ -110,7 +118,6 @@ func (o *Orchestrator) execute(ctx context.Context, jobID uint) (rowsTotal, rows
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(parallel)
 
-	var totalRows atomic.Int64
 	var syncedRows atomic.Int64
 	var rowIndex atomic.Int64
 
@@ -129,7 +136,6 @@ func (o *Orchestrator) execute(ctx context.Context, jobID uint) (rowsTotal, rows
 		if err := enrichDocs(gctx, src, &job, schema, batch); err != nil {
 			return err
 		}
-		totalRows.Add(int64(len(batch)))
 		start := rowIndex.Add(int64(len(batch))) - int64(len(batch))
 
 		g.Go(func() error {
@@ -138,13 +144,17 @@ func (o *Orchestrator) execute(ctx context.Context, jobID uint) (rowsTotal, rows
 			if err := dst.WriteBatch(gctx, job.DestinationTable, batch); err != nil {
 				return err
 			}
-			syncedRows.Add(int64(len(batch)))
+			n := int64(len(batch))
+			syncedRows.Add(n)
+			if err := o.recordChunkSynced(logID, n); err != nil {
+				return fmt.Errorf("update rows_synced: %w", err)
+			}
 			return nil
 		})
 		return nil
 	})
 	waitErr := g.Wait()
-	rowsTotal = totalRows.Load()
+	rowsTotal = sourceTotal
 	rowsSynced = syncedRows.Load()
 	if waitErr != nil {
 		return rowsTotal, rowsSynced, waitErr
@@ -153,4 +163,18 @@ func (o *Orchestrator) execute(ctx context.Context, jobID uint) (rowsTotal, rows
 		return rowsTotal, rowsSynced, err
 	}
 	return rowsTotal, rowsSynced, nil
+}
+
+func (o *Orchestrator) recordRowsTotal(logID uint, n int64) error {
+	return o.db.Model(&models.SyncLog{}).
+		Where("id = ?", logID).
+		UpdateColumn("rows_total", n).
+		Error
+}
+
+func (o *Orchestrator) recordChunkSynced(logID uint, n int64) error {
+	return o.db.Model(&models.SyncLog{}).
+		Where("id = ?", logID).
+		Update("rows_synced", gorm.Expr("COALESCE(rows_synced, 0) + ?", n)).
+		Error
 }
