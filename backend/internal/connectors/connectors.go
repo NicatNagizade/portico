@@ -30,12 +30,19 @@ type TableSchema struct {
 	Columns []ColumnSchema
 }
 
+// Filter is a source-row predicate applied during Count / ReadChunks.
+type Filter struct {
+	Column   string
+	Operator string
+	Value    string
+}
+
 type SourceReader interface {
 	Open(ctx context.Context) error
 	ListTables(ctx context.Context) ([]string, error)
 	Schema(ctx context.Context, table string) (*TableSchema, error)
-	Count(ctx context.Context, table string) (int64, error)
-	ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error
+	Count(ctx context.Context, table string, filters []Filter) (int64, error)
+	ReadChunks(ctx context.Context, table string, chunkSize int, filters []Filter, fn func([]map[string]any) error) error
 	QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error)
 	Close() error
 }

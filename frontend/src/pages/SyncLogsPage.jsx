@@ -18,7 +18,7 @@ import {
   inputClassName,
   tableClassName,
 } from '../components/ui'
-import { formatDate, formatDuration } from '../lib/destinationTypes'
+import { formatDate, formatDuration } from '../lib/format'
 
 const PAGE_SIZE = 20
 

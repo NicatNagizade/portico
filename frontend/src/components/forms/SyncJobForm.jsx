@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
 import { parseConfig } from '../../lib/connectionTypes'
+import { ruleNeedsValue } from '../../lib/ruleOperators'
 import useConnectionSchema from '../../hooks/useConnectionSchema'
 import AutocompleteInput from '../AutocompleteInput'
 import { Field, PrimaryButton, inputClassName } from '../ui'
 import FieldEditor from './FieldEditor'
 import RelationEditor from './RelationEditor'
+import RuleEditor from './RuleEditor'
 
 function toArrayCsv(value) {
   if (Array.isArray(value)) return value.join(', ')
@@ -40,6 +42,16 @@ function mapField(f) {
   }
 }
 
+function mapRule(r) {
+  return {
+    id: r.id,
+    field: r.field || '',
+    operator: r.operator || 'eq',
+    value: r.value || '',
+    active: r.active !== false,
+  }
+}
+
 function pivotFromConfig(config) {
   const parsed = parseConfig(config)
   return parsed.pivot_table || ''
@@ -65,6 +77,7 @@ export default function SyncJobForm({
   const [workers, setWorkers] = useState(initial?.workers ?? 2)
   const [config, setConfig] = useState(() => buildInitialConfig(initial?.config))
   const [fields, setFields] = useState(() => (initial?.fields || []).map(mapField))
+  const [rules, setRules] = useState(() => (initial?.rules || []).map(mapRule))
   const [relations, setRelations] = useState(() =>
     (initial?.relations || []).map((r) => ({
       id: r.id,
@@ -159,6 +172,16 @@ export default function SyncJobForm({
       ),
     ]
 
+    const rulePayload = rules
+      .filter((r) => r.field.trim())
+      .map((r) => ({
+        id: r.id && r.id > 0 ? r.id : undefined,
+        field: r.field.trim(),
+        operator: r.operator,
+        value: ruleNeedsValue(r.operator) ? r.value ?? '' : '',
+        active: r.active !== false,
+      }))
+
     const payload = {
       name: name.trim(),
       source_connection_id: Number(sourceConnectionId),
@@ -169,6 +192,7 @@ export default function SyncJobForm({
       workers: Number(workers) || 2,
       config: payloadConfig,
       fields: fieldPayload,
+      rules: rulePayload,
       relations: relationPayload,
     }
 
@@ -328,6 +352,15 @@ export default function SyncJobForm({
           </div>
         </details>
       ) : null}
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
+        <RuleEditor
+          rules={rules}
+          onChange={setRules}
+          sourceColumns={sourceColumns}
+          onNeedSourceColumns={() => ensureColumns(sourceTable)}
+        />
+      </div>
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
         <FieldEditor

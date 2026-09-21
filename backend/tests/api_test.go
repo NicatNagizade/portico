@@ -398,6 +398,19 @@ func TestSyncJobsAndLogs(t *testing.T) {
 				"active":           false,
 			},
 		},
+		"rules": []map[string]any{
+			{
+				"field":    "client_id",
+				"operator": "eq",
+				"value":    "123",
+			},
+			{
+				"field":    "status",
+				"operator": "neq",
+				"value":    "archived",
+				"active":   false,
+			},
+		},
 	}
 	payload, _ := json.Marshal(body)
 	w := httptest.NewRecorder()
@@ -433,6 +446,15 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if job.Fields[2].SourceName != "internal_notes" || job.Fields[2].IsActive() {
 		t.Fatalf("expected active=false field preserved, got %+v", job.Fields[2])
 	}
+	if len(job.Rules) != 2 {
+		t.Fatalf("expected 2 rules, got %+v", job.Rules)
+	}
+	if job.Rules[0].Field != "client_id" || job.Rules[0].Operator != "eq" || job.Rules[0].Value != "123" || !job.Rules[0].IsActive() {
+		t.Fatalf("unexpected first rule: %+v", job.Rules[0])
+	}
+	if job.Rules[1].Field != "status" || job.Rules[1].IsActive() {
+		t.Fatalf("expected inactive status rule, got %+v", job.Rules[1])
+	}
 	var jobCfg map[string]any
 	if err := json.Unmarshal(job.Config, &jobCfg); err != nil {
 		t.Fatalf("decode job config: %v", err)
@@ -456,6 +478,9 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if len(job.Fields) != 3 {
 		t.Fatalf("expected preloaded fields, got %+v", job.Fields)
 	}
+	if len(job.Rules) != 2 {
+		t.Fatalf("expected preloaded rules, got %+v", job.Rules)
+	}
 
 	update := map[string]any{
 		"relations": []map[string]any{
@@ -475,6 +500,13 @@ func TestSyncJobsAndLogs(t *testing.T) {
 				"destination_type": "string",
 			},
 		},
+		"rules": []map[string]any{
+			{
+				"field":    "client_id",
+				"operator": "eq",
+				"value":    "456",
+			},
+		},
 	}
 	up, _ := json.Marshal(update)
 	w = httptest.NewRecorder()
@@ -492,6 +524,9 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 	if len(job.Fields) != 1 || job.Fields[0].DestinationName != "display_name" {
 		t.Fatalf("expected replaced fields, got %+v", job.Fields)
+	}
+	if len(job.Rules) != 1 || job.Rules[0].Value != "456" {
+		t.Fatalf("expected replaced rules, got %+v", job.Rules)
 	}
 
 	w = httptest.NewRecorder()
@@ -599,10 +634,10 @@ func (m *failingSource) ListTables(ctx context.Context) ([]string, error) {
 func (m *failingSource) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
 	return nil, m.err
 }
-func (m *failingSource) Count(ctx context.Context, table string) (int64, error) {
+func (m *failingSource) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
 	return 0, m.err
 }
-func (m *failingSource) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
+func (m *failingSource) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
 	return m.err
 }
 func (m *failingSource) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
@@ -633,10 +668,16 @@ func (m *mockSource) Schema(ctx context.Context, table string) (*connectors.Tabl
 	}
 	return m.schema, nil
 }
-func (m *mockSource) Count(ctx context.Context, table string) (int64, error) {
-	return int64(len(m.rows)), nil
+func (m *mockSource) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
+	n := int64(0)
+	for _, row := range m.rows {
+		if matchFilters(row, filters) {
+			n++
+		}
+	}
+	return n, nil
 }
-func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
+func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
 	if m.readHold != nil {
 		m.held.Store(true)
 		select {
@@ -645,12 +686,18 @@ func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int
 			return ctx.Err()
 		}
 	}
-	for i := 0; i < len(m.rows); i += chunkSize {
-		end := i + chunkSize
-		if end > len(m.rows) {
-			end = len(m.rows)
+	var filtered []map[string]any
+	for _, row := range m.rows {
+		if matchFilters(row, filters) {
+			filtered = append(filtered, row)
 		}
-		if err := fn(m.rows[i:end]); err != nil {
+	}
+	for i := 0; i < len(filtered); i += chunkSize {
+		end := i + chunkSize
+		if end > len(filtered) {
+			end = len(filtered)
+		}
+		if err := fn(filtered[i:end]); err != nil {
 			return err
 		}
 	}
@@ -815,6 +862,113 @@ func TestSyncRunWithMocks(t *testing.T) {
 	}
 	if len(dst.batches) == 0 {
 		t.Fatal("expected batches to be written")
+	}
+}
+
+func TestSyncRunWithRules(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name:   "dst",
+		Type:   "mock_dst",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "filtered-sync",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "users",
+		DestinationTable:        "users",
+		ChunkSize:               10,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	active := true
+	inactive := false
+	if err := gdb.Create(&models.SyncJobRule{
+		SyncJobID: job.ID,
+		Field:     "client_id",
+		Operator:  models.RuleOperatorEq,
+		Value:     "123",
+		Active:    &active,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&models.SyncJobRule{
+		SyncJobID: job.ID,
+		Field:     "status",
+		Operator:  models.RuleOperatorEq,
+		Value:     "skip",
+		Active:    &inactive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "client_id", Type: connectors.FieldTypeInt64},
+				{Name: "name", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "client_id": int64(123), "name": "keep"},
+			{"id": 2, "client_id": int64(999), "name": "drop"},
+			{"id": 3, "client_id": int64(123), "name": "keep2"},
+		},
+	}
+	dst := &mockDest{}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/run", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var logEntry models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
+		t.Fatal(err)
+	}
+	if logEntry.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", logEntry.Status, logEntry.Message)
+	}
+	if logEntry.RowsTotal == nil || *logEntry.RowsTotal != 2 {
+		t.Fatalf("expected rows_total=2, got %+v", logEntry.RowsTotal)
+	}
+	if logEntry.RowsSynced == nil || *logEntry.RowsSynced != 2 {
+		t.Fatalf("expected rows_synced=2, got %+v", logEntry.RowsSynced)
+	}
+	var names []string
+	for _, batch := range dst.batches {
+		for _, doc := range batch {
+			names = append(names, fmt.Sprint(doc["name"]))
+		}
+	}
+	sort.Strings(names)
+	if len(names) != 2 || names[0] != "keep" || names[1] != "keep2" {
+		t.Fatalf("unexpected synced names: %v", names)
 	}
 }
 

@@ -2,18 +2,18 @@ package sqlutil
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"fmt"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
-// ReadChunks runs query and invokes fn for each batch of rows.
-func ReadChunks(ctx context.Context, db *sql.DB, query string, chunkSize int, fn func([]map[string]any) error) error {
+// ReadChunks streams rows from a prepared GORM query and invokes fn per batch.
+func ReadChunks(ctx context.Context, db *gorm.DB, chunkSize int, fn func([]map[string]any) error) error {
 	if chunkSize <= 0 {
 		chunkSize = 500
 	}
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := db.WithContext(ctx).Rows()
 	if err != nil {
 		return err
 	}
@@ -60,91 +60,30 @@ func ReadChunks(ctx context.Context, db *sql.DB, query string, chunkSize int, fn
 }
 
 // QueryRows runs a SELECT with an IN filter and returns all matching rows.
-// placeholderFn builds bound placeholders for n values (e.g. "?" or "$1,$2").
 func QueryRows(
 	ctx context.Context,
-	db *sql.DB,
-	fromClause string,
+	db *gorm.DB,
 	columns []string,
-	whereColumnQuoted string,
+	whereColumn string,
 	whereValues []any,
-	placeholderFn func(n int) string,
 ) ([]map[string]any, error) {
 	if len(whereValues) == 0 {
 		return nil, nil
 	}
-	selectList := "*"
+	q := db.WithContext(ctx)
 	if len(columns) > 0 {
-		parts := make([]string, len(columns))
-		copy(parts, columns)
-		selectList = strings.Join(parts, ", ")
+		q = q.Select(strings.Join(columns, ", "))
 	}
-	query := fmt.Sprintf(
-		"SELECT %s FROM %s WHERE %s IN (%s)",
-		selectList,
-		fromClause,
-		whereColumnQuoted,
-		placeholderFn(len(whereValues)),
-	)
-	rows, err := db.QueryContext(ctx, query, whereValues...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-	colTypes, err := rows.ColumnTypes()
-	if err != nil {
-		return nil, err
-	}
-
 	var out []map[string]any
-	for rows.Next() {
-		vals := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range vals {
-			ptrs[i] = &vals[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, err
-		}
-		doc := make(map[string]any, len(cols))
-		for i, col := range cols {
-			doc[col] = NormalizeValue(vals[i], colTypes[i].DatabaseTypeName())
-		}
-		out = append(out, doc)
-	}
-	if err := rows.Err(); err != nil {
+	if err := q.Where(whereColumn+" IN ?", whereValues).Find(&out).Error; err != nil {
 		return nil, err
+	}
+	for _, row := range out {
+		for k, v := range row {
+			row[k] = NormalizeValue(v, "")
+		}
 	}
 	return out, nil
-}
-
-// PlaceholdersMySQL returns "?,?,?" for n values.
-func PlaceholdersMySQL(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	parts := make([]string, n)
-	for i := range parts {
-		parts[i] = "?"
-	}
-	return strings.Join(parts, ",")
-}
-
-// PlaceholdersPostgres returns "$1,$2,$3" for n values.
-func PlaceholdersPostgres(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	parts := make([]string, n)
-	for i := range parts {
-		parts[i] = fmt.Sprintf("$%d", i+1)
-	}
-	return strings.Join(parts, ",")
 }
 
 // NormalizeValue converts driver values into JSON-friendly Go types.

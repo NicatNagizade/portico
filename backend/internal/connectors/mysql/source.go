@@ -2,15 +2,16 @@ package mysql
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/connectors/sqlutil"
 	"github.com/portico/backend/internal/models"
+	mysqlDriver "gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type Config struct {
@@ -23,7 +24,7 @@ type Config struct {
 
 type Source struct {
 	cfg Config
-	db  *sql.DB
+	db  *gorm.DB
 }
 
 func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
@@ -40,12 +41,18 @@ func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
 func (s *Source) Open(ctx context.Context) error {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4",
 		s.cfg.User, s.cfg.Password, s.cfg.Host, s.cfg.Port, s.cfg.Database)
-	db, err := sql.Open("mysql", dsn)
+	db, err := gorm.Open(mysqlDriver.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
 		return err
 	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
 		return err
 	}
 	s.db = db
@@ -56,75 +63,69 @@ func (s *Source) Close() error {
 	if s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
 }
 
 func (s *Source) ListTables(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	var tables []string
+	err := s.db.WithContext(ctx).Raw(`
 		SELECT TABLE_NAME
 		FROM information_schema.TABLES
 		WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
-		ORDER BY TABLE_NAME`, s.cfg.Database)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tables []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		tables = append(tables, name)
-	}
-	return tables, rows.Err()
+		ORDER BY TABLE_NAME`, s.cfg.Database).Scan(&tables).Error
+	return tables, err
 }
 
 func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	type colRow struct {
+		Name      string `gorm:"column:COLUMN_NAME"`
+		DataType  string `gorm:"column:DATA_TYPE"`
+		ColumnKey string `gorm:"column:COLUMN_KEY"`
+	}
+	var rows []colRow
+	if err := s.db.WithContext(ctx).Raw(`
 		SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY
 		FROM information_schema.COLUMNS
 		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-		ORDER BY ORDINAL_POSITION`, s.cfg.Database, table)
-	if err != nil {
+		ORDER BY ORDINAL_POSITION`, s.cfg.Database, table).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	schema := &connectors.TableSchema{}
-	for rows.Next() {
-		var name, dataType, columnKey string
-		if err := rows.Scan(&name, &dataType, &columnKey); err != nil {
-			return nil, err
-		}
-		schema.Columns = append(schema.Columns, connectors.ColumnSchema{
-			Name:       name,
-			Type:       mapMySQLType(dataType),
-			PrimaryKey: columnKey == "PRI",
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(schema.Columns) == 0 {
+	if len(rows) == 0 {
 		return nil, fmt.Errorf("table %q not found or has no columns", table)
+	}
+	schema := &connectors.TableSchema{}
+	for _, r := range rows {
+		schema.Columns = append(schema.Columns, connectors.ColumnSchema{
+			Name:       r.Name,
+			Type:       mapMySQLType(r.DataType),
+			PrimaryKey: r.ColumnKey == "PRI",
+		})
 	}
 	return schema, nil
 }
 
-func (s *Source) Count(ctx context.Context, table string) (int64, error) {
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdent(table))
+func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
+	q, err := sqlutil.ApplyFilters(s.db.WithContext(ctx).Table(quoteIdent(table)), filters, quoteIdent)
+	if err != nil {
+		return 0, err
+	}
 	var n int64
-	if err := s.db.QueryRowContext(ctx, query).Scan(&n); err != nil {
+	if err := q.Count(&n).Error; err != nil {
 		return 0, err
 	}
 	return n, nil
 }
 
-func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
-	query := fmt.Sprintf("SELECT * FROM %s", quoteIdent(table))
-	return sqlutil.ReadChunks(ctx, s.db, query, chunkSize, fn)
+func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
+	q, err := sqlutil.ApplyFilters(s.db.Table(quoteIdent(table)), filters, quoteIdent)
+	if err != nil {
+		return err
+	}
+	return sqlutil.ReadChunks(ctx, q, chunkSize, fn)
 }
 
 func (s *Source) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
@@ -134,12 +135,10 @@ func (s *Source) QueryRows(ctx context.Context, table string, columns []string, 
 	}
 	return sqlutil.QueryRows(
 		ctx,
-		s.db,
-		quoteIdent(table),
+		s.db.Table(quoteIdent(table)),
 		quotedCols,
 		quoteIdent(whereColumn),
 		whereValues,
-		sqlutil.PlaceholdersMySQL,
 	)
 }
 

@@ -36,10 +36,14 @@ Future pairs (MySQL→MySQL, MySQL→MongoDB) should land the same way — new c
 
 ## Sync jobs, fields, relations
 
-**When:** mapping, overrides, nested imports.
+**When:** mapping, overrides, nested imports, source filters.
 
 - No field rows → pass through all source columns.
 - `active=false` on a field or relation → skip it on import.
+- Rules filter source rows before Count/Read (AND). Example: `field=client_id`, `operator=eq`, `value=123`.
+- Operators: `eq` / `neq` / `gt` / `gte` / `lt` / `lte` / `in` / `not_in` / `like` / `is_null` / `is_not_null`.
+- `in` / `not_in` values are comma-separated. `is_null` / `is_not_null` ignore value.
+- `active=false` on a rule → skip that predicate.
 - Relations: `belongs_to_many` / `has_many` / `has_one` / `belongs_to`; optional `parent_id` (FK to another relation row) for nesting.
 - M2M pivot table lives in relation `config.pivot_table`.
 - Field rows may set `sync_job_relation_id` to override columns on related docs; omit for root fields.

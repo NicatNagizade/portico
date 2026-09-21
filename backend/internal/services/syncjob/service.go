@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/models"
@@ -48,6 +49,14 @@ type FieldInput struct {
 	Active            *bool           `json:"active"`
 }
 
+type RuleInput struct {
+	ID       *int64 `json:"id"`
+	Field    string `json:"field" binding:"required"`
+	Operator string `json:"operator" binding:"required"`
+	Value    string `json:"value"`
+	Active   *bool  `json:"active"`
+}
+
 type CreateInput struct {
 	Name                    string          `json:"name" binding:"required"`
 	SourceConnectionID      uint            `json:"source_connection_id" binding:"required"`
@@ -59,6 +68,7 @@ type CreateInput struct {
 	Config                  json.RawMessage `json:"config" swaggertype:"object"`
 	Relations               []RelationInput `json:"relations"`
 	Fields                  []FieldInput    `json:"fields"`
+	Rules                   []RuleInput     `json:"rules"`
 }
 
 type UpdateInput struct {
@@ -72,6 +82,7 @@ type UpdateInput struct {
 	Config                  json.RawMessage  `json:"config" swaggertype:"object"`
 	Relations               *[]RelationInput `json:"relations"`
 	Fields                  *[]FieldInput    `json:"fields"`
+	Rules                   *[]RuleInput     `json:"rules"`
 }
 
 func (s *Service) List(page, pageSize int) ([]models.SyncJob, int64, error) {
@@ -98,6 +109,7 @@ func (s *Service) Get(id uint) (*models.SyncJob, error) {
 		Preload("Relations").
 		Preload("Relations.Fields").
 		Preload("Fields", "sync_job_relation_id IS NULL").
+		Preload("Rules").
 		First(&item, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -135,7 +147,10 @@ func (s *Service) Create(in CreateInput) (*models.SyncJob, error) {
 		if err != nil {
 			return err
 		}
-		return upsertFields(tx, item.ID, in.Fields, idMap)
+		if err := upsertFields(tx, item.ID, in.Fields, idMap); err != nil {
+			return err
+		}
+		return upsertRules(tx, item.ID, in.Rules)
 	}); err != nil {
 		return nil, err
 	}
@@ -193,6 +208,11 @@ func (s *Service) Update(id uint, in UpdateInput) (*models.SyncJob, error) {
 				return err
 			}
 		}
+		if in.Rules != nil {
+			if err := upsertRules(tx, id, *in.Rules); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -202,7 +222,7 @@ func (s *Service) Update(id uint, in UpdateInput) (*models.SyncJob, error) {
 }
 
 func (s *Service) Delete(id uint) error {
-	res := s.db.Select("Relations", "Fields", "Logs").Delete(&models.SyncJob{ID: id})
+	res := s.db.Select("Relations", "Fields", "Rules", "Logs").Delete(&models.SyncJob{ID: id})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -486,6 +506,84 @@ func upsertFields(tx *gorm.DB, jobID uint, inputs []FieldInput, relationIDMap ma
 		}
 	}
 	return nil
+}
+
+func upsertRules(tx *gorm.DB, jobID uint, inputs []RuleInput) error {
+	var existing []models.SyncJobRule
+	if err := tx.Where("sync_job_id = ?", jobID).Find(&existing).Error; err != nil {
+		return err
+	}
+	existingByID := make(map[uint]models.SyncJobRule, len(existing))
+	for _, r := range existing {
+		existingByID[r.ID] = r
+	}
+	keep := make(map[uint]struct{})
+
+	for _, in := range inputs {
+		rule, err := ruleFromInput(jobID, in)
+		if err != nil {
+			return err
+		}
+
+		clientKey := int64(0)
+		if in.ID != nil {
+			clientKey = *in.ID
+		}
+		if clientKey > 0 {
+			prev, ok := existingByID[uint(clientKey)]
+			if !ok {
+				return fmt.Errorf("%w: rule id %d not found", ErrInvalid, clientKey)
+			}
+			rule.ID = prev.ID
+			if err := tx.Select("Field", "Operator", "Value", "Active").Save(&rule).Error; err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Select("SyncJobID", "Field", "Operator", "Value", "Active").Create(&rule).Error; err != nil {
+				return err
+			}
+		}
+		keep[rule.ID] = struct{}{}
+	}
+
+	for id := range existingByID {
+		if _, ok := keep[id]; ok {
+			continue
+		}
+		if err := tx.Delete(&models.SyncJobRule{}, id).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ruleFromInput(jobID uint, in RuleInput) (models.SyncJobRule, error) {
+	field := strings.TrimSpace(in.Field)
+	if field == "" {
+		return models.SyncJobRule{}, fmt.Errorf("%w: rule field is required", ErrInvalid)
+	}
+	if !models.ValidRuleOperator(in.Operator) {
+		return models.SyncJobRule{}, fmt.Errorf("%w: unsupported rule operator %q", ErrInvalid, in.Operator)
+	}
+	value := in.Value
+	if models.RuleNeedsValue(in.Operator) {
+		if strings.TrimSpace(value) == "" {
+			return models.SyncJobRule{}, fmt.Errorf("%w: rule value is required for operator %q", ErrInvalid, in.Operator)
+		}
+	} else {
+		value = ""
+	}
+	active := true
+	if in.Active != nil {
+		active = *in.Active
+	}
+	return models.SyncJobRule{
+		SyncJobID: jobID,
+		Field:     field,
+		Operator:  in.Operator,
+		Value:     value,
+		Active:    &active,
+	}, nil
 }
 
 func validFieldType(t string) bool {

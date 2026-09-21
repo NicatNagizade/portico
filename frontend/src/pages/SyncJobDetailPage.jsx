@@ -12,7 +12,8 @@ import {
   Panel,
   TypeChip,
 } from '../components/ui'
-import { formatDate } from '../lib/destinationTypes'
+import { formatDate } from '../lib/format'
+import { ruleNeedsValue, ruleOperatorLabel } from '../lib/ruleOperators'
 import { parseConfig } from '../lib/connectionTypes'
 
 function Icon({ children }) {
@@ -290,9 +291,36 @@ export default function SyncJobDetailPage() {
         </Panel>
 
         <Panel
+          title="Filter rules"
+          description={`${(job.rules || []).length} rule(s) — AND'd before import`}
+          className="animate-fade-up stagger-3 lg:col-span-2"
+        >
+          {(job.rules || []).length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">No filters — all source rows are imported.</p>
+          ) : (
+            <ul className="divide-y divide-[var(--border)]">
+              {job.rules.map((rule) => (
+                <li key={rule.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
+                  <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+                    <span className="rounded-md bg-[var(--bg-elevated)] px-2 py-1">{rule.field}</span>
+                    <span className="text-[var(--text-muted)]">{ruleOperatorLabel(rule.operator)}</span>
+                    {ruleNeedsValue(rule.operator) ? (
+                      <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[var(--accent-ink)]">
+                        {rule.value}
+                      </span>
+                    ) : null}
+                  </div>
+                  <MetaChip>{rule.active === false ? 'inactive' : 'active'}</MetaChip>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+
+        <Panel
           title="Field overrides"
           description={`${(job.fields || []).length} root field(s)`}
-          className="animate-fade-up stagger-3 lg:col-span-2"
+          className="animate-fade-up stagger-4 lg:col-span-2"
         >
           {(job.fields || []).length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">No field overrides — columns pass through.</p>
@@ -322,7 +350,7 @@ export default function SyncJobDetailPage() {
         <Panel
           title="Relations"
           description={`${(job.relations || []).length} configured`}
-          className="animate-fade-up stagger-4 lg:col-span-2"
+          className="animate-fade-up stagger-5 lg:col-span-2"
         >
           {(job.relations || []).length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">No relations configured.</p>

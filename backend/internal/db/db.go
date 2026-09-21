@@ -50,6 +50,7 @@ func migrate(gdb *gorm.DB) error {
 		&models.SyncJob{},
 		&models.SyncJobRelation{},
 		&models.SyncJobField{},
+		&models.SyncJobRule{},
 		&models.SyncLog{},
 	); err != nil {
 		return fmt.Errorf("auto migrate: %w", err)
@@ -61,6 +62,7 @@ func migrate(gdb *gorm.DB) error {
 func Refresh(gdb *gorm.DB) error {
 	if err := gdb.Migrator().DropTable(
 		&models.SyncLog{},
+		&models.SyncJobRule{},
 		&models.SyncJobField{},
 		&models.SyncJobRelation{},
 		&models.SyncJob{},

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { RELATION_TYPES } from '../../lib/destinationTypes'
+import { RELATION_TYPES } from '../../lib/relationTypes'
 import AutocompleteInput from '../AutocompleteInput'
 import { GhostButton, IconButton, MetaChip, SecondaryButton } from '../ui'
 import FieldEditor from './FieldEditor'
@@ -145,7 +145,7 @@ export default function RelationEditor({
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-2">
           <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
-            04
+            05
           </span>
           <div>
             <h3 className="text-sm font-semibold text-[var(--text)]">Relations</h3>

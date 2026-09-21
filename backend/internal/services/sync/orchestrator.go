@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	stdsync "sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/portico/backend/internal/connectors"
@@ -170,6 +170,7 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 		Preload("Relations").
 		Preload("Relations.Fields").
 		Preload("Fields", "sync_job_relation_id IS NULL").
+		Preload("Rules").
 		First(&job, jobID).Error; err != nil {
 		return 0, 0, fmt.Errorf("load sync job: %w", err)
 	}
@@ -205,7 +206,8 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 		return 0, 0, fmt.Errorf("prepare destination: %w", err)
 	}
 
-	sourceTotal, err := src.Count(ctx, job.SourceTable)
+	filters := ActiveFilters(job.Rules)
+	sourceTotal, err := src.Count(ctx, job.SourceTable, filters)
 	if err != nil {
 		return 0, 0, fmt.Errorf("count source rows: %w", err)
 	}
@@ -228,7 +230,7 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 	var syncedRows atomic.Int64
 	var rowIndex atomic.Int64
 
-	err = src.ReadChunks(gctx, job.SourceTable, chunkSize, func(docs []map[string]any) error {
+	err = src.ReadChunks(gctx, job.SourceTable, chunkSize, filters, func(docs []map[string]any) error {
 		if err := gctx.Err(); err != nil {
 			return err
 		}

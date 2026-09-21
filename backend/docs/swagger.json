@@ -1008,6 +1008,12 @@
                         "$ref": "#/definitions/models.SyncJobRelation"
                     }
                 },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncJobRule"
+                    }
+                },
                 "source_connection": {
                     "$ref": "#/definitions/models.Connection"
                 },
@@ -1107,6 +1113,35 @@
                 }
             }
         },
+        "models.SyncJobRule": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "sync_job_id": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
         "models.SyncLog": {
             "type": "object",
             "properties": {
@@ -1177,6 +1212,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/syncjob.RelationInput"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.RuleInput"
                     }
                 },
                 "source_connection_id": {
@@ -1256,6 +1297,30 @@
                 }
             }
         },
+        "syncjob.RuleInput": {
+            "type": "object",
+            "required": [
+                "field",
+                "operator"
+            ],
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
         "syncjob.UpdateInput": {
             "type": "object",
             "properties": {
@@ -1284,6 +1349,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/syncjob.RelationInput"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.RuleInput"
                     }
                 },
                 "source_connection_id": {

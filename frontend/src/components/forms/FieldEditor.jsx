@@ -36,7 +36,7 @@ export default function FieldEditor({
   onNeedSourceColumns,
   title = 'Field overrides',
   description = 'Rename columns, set destination types, or exclude fields. Leave empty to pass through all source columns.',
-  sectionNumber = '03',
+  sectionNumber = '04',
   compact = false,
 }) {
   function updateRow(index, patch) {

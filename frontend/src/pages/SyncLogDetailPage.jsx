@@ -12,7 +12,7 @@ import {
   Panel,
   SecondaryButton,
 } from '../components/ui'
-import { formatDate, formatDuration } from '../lib/destinationTypes'
+import { formatDate, formatDuration } from '../lib/format'
 import { isSyncLogRunning } from '../lib/syncLogStatus'
 
 const POLL_MS = 750
