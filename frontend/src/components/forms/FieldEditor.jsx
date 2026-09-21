@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { DESTINATION_TYPES } from '../../lib/destinationTypes'
+import { columnNames } from '../../lib/sourceColumns'
 import AutocompleteInput from '../AutocompleteInput'
 import { IconButton, SecondaryButton } from '../ui'
 
@@ -34,17 +36,31 @@ export default function FieldEditor({
   onChange,
   sourceColumns = [],
   onNeedSourceColumns,
+  onAutofill,
   title = 'Field overrides',
   description = 'Rename columns, set destination types, or exclude fields. Leave empty to pass through all source columns.',
   sectionNumber = '04',
   compact = false,
 }) {
+  const [autofilling, setAutofilling] = useState(false)
+  const nameOptions = columnNames(sourceColumns)
+
   function updateRow(index, patch) {
     onChange(fields.map((row, i) => (i === index ? { ...row, ...patch } : row)))
   }
 
   function removeRow(index) {
     onChange(fields.filter((_, i) => i !== index))
+  }
+
+  async function handleAutofill() {
+    if (!onAutofill || autofilling) return
+    setAutofilling(true)
+    try {
+      await onAutofill()
+    } finally {
+      setAutofilling(false)
+    }
   }
 
   return (
@@ -63,9 +79,16 @@ export default function FieldEditor({
             </div>
           </div>
         )}
-        <SecondaryButton type="button" onClick={() => onChange([...fields, emptyField()])}>
-          Add field
-        </SecondaryButton>
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          {onAutofill ? (
+            <SecondaryButton type="button" disabled={autofilling} onClick={handleAutofill}>
+              {autofilling ? 'Filling…' : 'Autofill from source'}
+            </SecondaryButton>
+          ) : null}
+          <SecondaryButton type="button" onClick={() => onChange([...fields, emptyField()])}>
+            Add field
+          </SecondaryButton>
+        </div>
       </div>
 
       {fields.length === 0 ? (
@@ -101,7 +124,7 @@ export default function FieldEditor({
                   <td className="px-2 py-1.5">
                     <AutocompleteInput
                       className={compactInput}
-                      options={sourceColumns}
+                      options={nameOptions}
                       value={row.source_name}
                       onFocus={onNeedSourceColumns}
                       onChange={(e) => updateRow(index, { source_name: e.target.value })}

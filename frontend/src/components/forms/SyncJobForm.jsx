@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { parseConfig } from '../../lib/connectionTypes'
 import { ruleNeedsValue } from '../../lib/ruleOperators'
+import { columnNames, fieldsFromSourceColumns } from '../../lib/sourceColumns'
 import useConnectionSchema from '../../hooks/useConnectionSchema'
 import AutocompleteInput from '../AutocompleteInput'
 import { Field, PrimaryButton, inputClassName } from '../ui'
@@ -111,6 +112,13 @@ export default function SyncJobForm({
   }, [connections, destinationConnectionId])
 
   const sourceColumns = columnsByTable[sourceTable.trim()] || []
+  const sourceColumnNames = columnNames(sourceColumns)
+
+  async function autofillFields() {
+    const columns = await ensureColumns(sourceTable)
+    if (!columns.length) return
+    setFields((prev) => fieldsFromSourceColumns(columns, prev))
+  }
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -312,7 +320,7 @@ export default function SyncJobForm({
           <div className="grid gap-4 border-t border-[var(--border)] px-4 pt-4 sm:grid-cols-2">
             <Field label="Default sorting field">
               <AutocompleteInput
-                options={sourceColumns}
+                options={sourceColumnNames}
                 value={config.default_sorting_field}
                 onFocus={() => ensureColumns(sourceTable)}
                 onChange={(e) =>
@@ -357,7 +365,7 @@ export default function SyncJobForm({
         <RuleEditor
           rules={rules}
           onChange={setRules}
-          sourceColumns={sourceColumns}
+          sourceColumns={sourceColumnNames}
           onNeedSourceColumns={() => ensureColumns(sourceTable)}
         />
       </div>
@@ -368,6 +376,7 @@ export default function SyncJobForm({
           onChange={setFields}
           sourceColumns={sourceColumns}
           onNeedSourceColumns={() => ensureColumns(sourceTable)}
+          onAutofill={sourceTable.trim() ? autofillFields : undefined}
         />
       </div>
 

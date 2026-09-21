@@ -272,13 +272,19 @@ func (h *Handlers) ListConnectionTables(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"tables": tables})
 }
 
+// ColumnInfo is a source column name + mapped Portico field type.
+type ColumnInfo struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
 // ListConnectionColumns godoc
 // @Summary List columns for a table on a source connection
 // @Tags connections
 // @Produce json
 // @Param id path int true "Connection ID"
 // @Param table query string true "Table name"
-// @Success 200 {object} map[string][]string
+// @Success 200 {object} map[string][]ColumnInfo
 // @Failure 400 {object} ErrorResponse
 // @Failure 404 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
@@ -302,9 +308,12 @@ func (h *Handlers) ListConnectionColumns(c *gin.Context) {
 		return
 	}
 
-	columns := make([]string, 0, len(schema.Columns))
+	columns := make([]ColumnInfo, 0, len(schema.Columns))
 	for _, col := range schema.Columns {
-		columns = append(columns, col.Name)
+		columns = append(columns, ColumnInfo{
+			Name: col.Name,
+			Type: string(col.Type),
+		})
 	}
 	c.JSON(http.StatusOK, gin.H{"columns": columns})
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { RELATION_TYPES } from '../../lib/relationTypes'
+import { columnNames, fieldsFromSourceColumns } from '../../lib/sourceColumns'
 import AutocompleteInput from '../AutocompleteInput'
 import { GhostButton, IconButton, MetaChip, SecondaryButton } from '../ui'
 import FieldEditor from './FieldEditor'
@@ -282,7 +283,7 @@ export default function RelationEditor({
                         <span className="mb-1 block text-[var(--text-muted)]">Foreign key</span>
                         <AutocompleteInput
                           className={compactInput}
-                          options={fkColumns}
+                          options={columnNames(fkColumns)}
                           value={row.foreign_key || ''}
                           onFocus={() => fkTable && onNeedColumns?.(fkTable)}
                           onChange={(e) => updateRow(index, { foreign_key: e.target.value })}
@@ -294,7 +295,7 @@ export default function RelationEditor({
                           <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
                           <AutocompleteInput
                             className={compactInput}
-                            options={pivotColumns}
+                            options={columnNames(pivotColumns)}
                             value={row.related_key || ''}
                             onFocus={() => row.pivot_table && onNeedColumns?.(row.pivot_table)}
                             onChange={(e) => updateRow(index, { related_key: e.target.value })}
@@ -344,6 +345,16 @@ export default function RelationEditor({
                         onChange={(fields) => updateRow(index, { fields })}
                         sourceColumns={relatedColumns}
                         onNeedSourceColumns={() => onNeedColumns?.(row.table)}
+                        onAutofill={
+                          row.table?.trim()
+                            ? async () => {
+                                const columns = (await onNeedColumns?.(row.table)) || []
+                                updateRow(index, {
+                                  fields: fieldsFromSourceColumns(columns, row.fields || []),
+                                })
+                              }
+                            : undefined
+                        }
                       />
                     </div>
 

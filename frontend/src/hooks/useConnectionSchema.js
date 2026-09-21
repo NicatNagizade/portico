@@ -2,9 +2,10 @@ import { useRef, useState } from 'react'
 import { listConnectionColumns, listConnectionTables } from '../api/connections'
 
 /**
- * Lazy source-schema helpers for autocomplete.
+ * Lazy source-schema helpers for autocomplete / autofill.
  * Fetches only when ensureTables / ensureColumns is called (e.g. on focus),
  * and never repeats a successful or in-flight request for the same key.
+ * ensureColumns always resolves to [{name, type}, ...] (empty on failure).
  */
 export default function useConnectionSchema(connectionId) {
   const [state, setState] = useState({
@@ -14,7 +15,7 @@ export default function useConnectionSchema(connectionId) {
     columnsByTable: {},
   })
   const pendingTables = useRef(null)
-  const pendingColumns = useRef(new Set())
+  const pendingColumns = useRef(new Map())
 
   // Ignore cached data from a previous connection without resetting in an effect.
   const tables = state.connectionId === connectionId ? state.tables : []
@@ -47,23 +48,34 @@ export default function useConnectionSchema(connectionId) {
 
   async function ensureColumns(table) {
     const name = table?.trim()
-    if (!connectionId || !name) return
+    if (!connectionId || !name) return []
 
     // Skip partial names once we know the real table list.
-    if (tablesLoaded && !tables.includes(name)) return
+    if (tablesLoaded && !tables.includes(name)) return []
+
+    if (name in columnsByTable) {
+      return columnsByTable[name]
+    }
 
     const cacheKey = `${connectionId}:${name}`
-    if (name in columnsByTable || pendingColumns.current.has(cacheKey)) return
+    const inFlight = pendingColumns.current.get(cacheKey)
+    if (inFlight) return inFlight
 
-    pendingColumns.current.add(cacheKey)
-    try {
-      const columns = await listConnectionColumns(connectionId, name)
-      setState((prev) => mergeColumns(prev, connectionId, name, columns))
-    } catch {
-      setState((prev) => mergeColumns(prev, connectionId, name, []))
-    } finally {
-      pendingColumns.current.delete(cacheKey)
-    }
+    const promise = (async () => {
+      try {
+        const columns = await listConnectionColumns(connectionId, name)
+        setState((prev) => mergeColumns(prev, connectionId, name, columns))
+        return columns
+      } catch {
+        setState((prev) => mergeColumns(prev, connectionId, name, []))
+        return []
+      } finally {
+        pendingColumns.current.delete(cacheKey)
+      }
+    })()
+
+    pendingColumns.current.set(cacheKey, promise)
+    return promise
   }
 
   return { tables, columnsByTable, ensureTables, ensureColumns }

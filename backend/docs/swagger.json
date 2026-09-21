@@ -295,7 +295,7 @@
                             "additionalProperties": {
                                 "type": "array",
                                 "items": {
-                                    "type": "string"
+                                    "$ref": "#/definitions/handlers.ColumnInfo"
                                 }
                             }
                         }
@@ -876,6 +876,17 @@
                 "config": {
                     "type": "object"
                 },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.ColumnInfo": {
+            "type": "object",
+            "properties": {
                 "name": {
                     "type": "string"
                 },

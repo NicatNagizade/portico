@@ -316,13 +316,18 @@ func TestConnectionTablesAndColumns(t *testing.T) {
 		t.Fatalf("columns: expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var columnsResp struct {
-		Columns []string `json:"columns"`
+		Columns []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"columns"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &columnsResp); err != nil {
 		t.Fatalf("decode columns: %v", err)
 	}
-	if len(columnsResp.Columns) != 2 || columnsResp.Columns[0] != "id" || columnsResp.Columns[1] != "email" {
-		t.Fatalf("unexpected columns: %v", columnsResp.Columns)
+	if len(columnsResp.Columns) != 2 ||
+		columnsResp.Columns[0].Name != "id" || columnsResp.Columns[0].Type != "int64" ||
+		columnsResp.Columns[1].Name != "email" || columnsResp.Columns[1].Type != "string" {
+		t.Fatalf("unexpected columns: %+v", columnsResp.Columns)
 	}
 
 	w = httptest.NewRecorder()
