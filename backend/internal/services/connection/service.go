@@ -32,6 +32,13 @@ type UpdateInput struct {
 	Config json.RawMessage `json:"config" swaggertype:"object"`
 }
 
+// CheckInput verifies credentials without saving. Optional ID merges blank secrets from an existing connection.
+type CheckInput struct {
+	ID     *uint           `json:"id"`
+	Type   string          `json:"type" binding:"required"`
+	Config json.RawMessage `json:"config" binding:"required" swaggertype:"object"`
+}
+
 func (s *Service) List() ([]models.Connection, error) {
 	var items []models.Connection
 	if err := s.db.Order("id asc").Find(&items).Error; err != nil {
@@ -96,4 +103,24 @@ func (s *Service) Delete(id uint) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// PrepareCheck builds an in-memory connection for a connectivity check.
+func (s *Service) PrepareCheck(in CheckInput) (*models.Connection, error) {
+	cfg := in.Config
+	if in.ID != nil {
+		existing, err := s.Get(*in.ID)
+		if err != nil {
+			return nil, err
+		}
+		merged, err := secretbox.Merge(existing.Config, in.Config)
+		if err != nil {
+			return nil, err
+		}
+		cfg = merged
+	}
+	return &models.Connection{
+		Type:   in.Type,
+		Config: datatypes.JSON(cfg),
+	}, nil
 }

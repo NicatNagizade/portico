@@ -79,6 +79,61 @@
                 }
             }
         },
+        "/connections/check": {
+            "post": {
+                "description": "Opens the source or destination connector with the given config without saving. Pass id when editing so blank secrets keep the stored values.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connections"
+                ],
+                "summary": "Check connection credentials",
+                "parameters": [
+                    {
+                        "description": "Connection check",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/connection.CheckInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/connections/{id}": {
             "get": {
                 "produces": [
@@ -240,7 +295,7 @@
                             "additionalProperties": {
                                 "type": "array",
                                 "items": {
-                                    "type": "string"
+                                    "$ref": "#/definitions/handlers.ColumnInfo"
                                 }
                             }
                         }
@@ -550,8 +605,127 @@
                 }
             }
         },
+        "/sync-jobs/{id}/explore": {
+            "post": {
+                "description": "Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync-jobs"
+                ],
+                "summary": "Explore sync job data",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Explore options",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ExploreRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sync.PreviewResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sync-jobs/{id}/explore/export": {
+            "post": {
+                "description": "Downloads matching source or destination rows as CSV.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/csv"
+                ],
+                "tags": [
+                    "sync-jobs"
+                ],
+                "summary": "Export sync job explore data as CSV",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Export options",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ExploreExportRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CSV file",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sync-jobs/{id}/run": {
             "post": {
+                "description": "Runs the sync synchronously and returns the finished sync log.",
                 "produces": [
                     "application/json"
                 ],
@@ -571,6 +745,47 @@
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.SyncLog"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sync-jobs/{id}/start": {
+            "post": {
+                "description": "Creates a sync log with status running and returns it immediately. Poll GET /sync-logs/{id} for progress (rows_synced / rows_total) and final status.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync-jobs"
+                ],
+                "summary": "Start a sync job in the background",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
                             "$ref": "#/definitions/models.SyncLog"
                         }
@@ -686,9 +901,74 @@
                     }
                 }
             }
+        },
+        "/sync-logs/{id}/stop": {
+            "post": {
+                "description": "Cancels a background sync and sets the log status to stopped.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync-logs"
+                ],
+                "summary": "Stop a running sync log",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync log ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.SyncLog"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "connection.CheckInput": {
+            "type": "object",
+            "required": [
+                "config",
+                "type"
+            ],
+            "properties": {
+                "config": {
+                    "type": "object"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "connection.CreateInput": {
             "type": "object",
             "required": [
@@ -722,11 +1002,62 @@
                 }
             }
         },
+        "handlers.ColumnInfo": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.ExploreExportRequest": {
+            "type": "object",
+            "required": [
+                "side"
+            ],
+            "properties": {
+                "side": {
+                    "type": "string",
+                    "example": "source"
+                }
+            }
+        },
+        "handlers.ExploreRequest": {
+            "type": "object",
+            "required": [
+                "side"
+            ],
+            "properties": {
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 50
+                },
+                "side": {
+                    "type": "string",
+                    "example": "source"
+                },
+                "sort_by": {
+                    "type": "string",
+                    "example": "id"
+                },
+                "sort_dir": {
+                    "type": "string",
+                    "example": "asc"
                 }
             }
         },
@@ -840,13 +1171,16 @@
                 "name": {
                     "type": "string"
                 },
-                "parallel_count": {
-                    "type": "integer"
-                },
                 "relations": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/models.SyncJobRelation"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncJobRule"
                     }
                 },
                 "source_connection": {
@@ -860,6 +1194,9 @@
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "workers": {
+                    "type": "integer"
                 }
             }
         },
@@ -890,6 +1227,9 @@
                 "sync_job_id": {
                     "type": "integer"
                 },
+                "sync_job_relation_id": {
+                    "type": "integer"
+                },
                 "updated_at": {
                     "type": "string"
                 }
@@ -901,8 +1241,17 @@
                 "active": {
                     "type": "boolean"
                 },
+                "config": {
+                    "type": "object"
+                },
                 "created_at": {
                     "type": "string"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncJobField"
+                    }
                 },
                 "foreign_key": {
                     "type": "string"
@@ -913,11 +1262,8 @@
                 "name": {
                     "type": "string"
                 },
-                "parent_relation": {
-                    "type": "string"
-                },
-                "pivot_table": {
-                    "type": "string"
+                "parent_id": {
+                    "type": "integer"
                 },
                 "related_key": {
                     "type": "string"
@@ -932,6 +1278,35 @@
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SyncJobRule": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "sync_job_id": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value": {
                     "type": "string"
                 }
             }
@@ -971,6 +1346,42 @@
                 }
             }
         },
+        "sync.PreviewResult": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "side": {
+                    "type": "string"
+                },
+                "sort_by": {
+                    "type": "string"
+                },
+                "sort_dir": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "syncjob.CreateInput": {
             "type": "object",
             "required": [
@@ -1002,13 +1413,16 @@
                 "name": {
                     "type": "string"
                 },
-                "parallel_count": {
-                    "type": "integer"
-                },
                 "relations": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/syncjob.RelationInput"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.RuleInput"
                     }
                 },
                 "source_connection_id": {
@@ -1016,6 +1430,9 @@
                 },
                 "source_table": {
                     "type": "string"
+                },
+                "workers": {
+                    "type": "integer"
                 }
             }
         },
@@ -1037,8 +1454,14 @@
                 "destination_type": {
                     "type": "string"
                 },
+                "id": {
+                    "type": "integer"
+                },
                 "source_name": {
                     "type": "string"
+                },
+                "sync_job_relation_id": {
+                    "type": "integer"
                 }
             }
         },
@@ -1053,17 +1476,20 @@
                 "active": {
                     "type": "boolean"
                 },
+                "config": {
+                    "type": "object"
+                },
                 "foreign_key": {
                     "type": "string"
+                },
+                "id": {
+                    "type": "integer"
                 },
                 "name": {
                     "type": "string"
                 },
-                "parent_relation": {
-                    "type": "string"
-                },
-                "pivot_table": {
-                    "type": "string"
+                "parent_id": {
+                    "type": "integer"
                 },
                 "related_key": {
                     "type": "string"
@@ -1072,6 +1498,30 @@
                     "type": "string"
                 },
                 "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "syncjob.RuleInput": {
+            "type": "object",
+            "required": [
+                "field",
+                "operator"
+            ],
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {
                     "type": "string"
                 }
             }
@@ -1100,13 +1550,16 @@
                 "name": {
                     "type": "string"
                 },
-                "parallel_count": {
-                    "type": "integer"
-                },
                 "relations": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/syncjob.RelationInput"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.RuleInput"
                     }
                 },
                 "source_connection_id": {
@@ -1114,6 +1567,9 @@
                 },
                 "source_table": {
                     "type": "string"
+                },
+                "workers": {
+                    "type": "integer"
                 }
             }
         }

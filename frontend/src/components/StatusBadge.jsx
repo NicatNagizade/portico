@@ -1,3 +1,5 @@
+import { isSyncLogRunning } from '../lib/syncLogStatus'
+
 const STYLES = {
   running: {
     bg: 'var(--running-soft)',
@@ -10,6 +12,10 @@ const STYLES = {
   failed: {
     bg: 'var(--danger-soft)',
     color: 'var(--danger)',
+  },
+  stopped: {
+    bg: 'var(--warning-soft)',
+    color: 'var(--warning)',
   },
 }
 
@@ -28,7 +34,7 @@ export default function StatusBadge({ status }) {
         className="h-1.5 w-1.5 rounded-full"
         style={{
           background: style.color,
-          animation: status === 'running' ? 'pulse-dot 1.4s ease-in-out infinite' : undefined,
+          animation: isSyncLogRunning(status) ? 'pulse-dot 1.4s ease-in-out infinite' : undefined,
         }}
       />
       {status || 'unknown'}

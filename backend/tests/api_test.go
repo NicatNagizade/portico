@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,6 +49,15 @@ func setupRouter(t *testing.T, gdb *gorm.DB, registry *connectors.Registry) *gin
 		registry,
 	)
 	return router.New(h)
+}
+
+func pivotTable(cfg datatypes.JSON) string {
+	var m map[string]any
+	if err := json.Unmarshal(cfg, &m); err != nil {
+		return ""
+	}
+	v, _ := m["pivot_table"].(string)
+	return v
 }
 
 func TestHealth(t *testing.T) {
@@ -170,6 +181,84 @@ func TestConnectionsCRUD(t *testing.T) {
 	}
 }
 
+func TestCheckConnection(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mysql", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return &mockSource{}, nil
+	})
+	r := setupRouter(t, gdb, registry)
+
+	body := map[string]any{
+		"type": "mysql",
+		"config": map[string]any{
+			"host":     "localhost",
+			"port":     3306,
+			"user":     "root",
+			"password": "secret",
+			"database": "app",
+		},
+	}
+	payload, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/connections/check", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("check: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	createPayload, _ := json.Marshal(map[string]any{
+		"name":   "mysql-src",
+		"type":   "mysql",
+		"config": body["config"],
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/connections", bytes.NewReader(createPayload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d body=%s", w.Code, w.Body.String())
+	}
+	var created models.Connection
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	editCheck, _ := json.Marshal(map[string]any{
+		"id":   created.ID,
+		"type": "mysql",
+		"config": map[string]any{
+			"host":     "localhost",
+			"port":     3306,
+			"user":     "root",
+			"password": "",
+			"database": "app",
+		},
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/connections/check", bytes.NewReader(editCheck))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("check with blank secret: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	failRegistry := connectors.NewRegistry()
+	failRegistry.RegisterSource("mysql", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return &failingSource{err: errors.New("dial refused")}, nil
+	})
+	failRouter := setupRouter(t, gdb, failRegistry)
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/connections/check", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	failRouter.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("failed check: expected 500, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestConnectionTablesAndColumns(t *testing.T) {
 	gdb := setupTestDB(t)
 
@@ -227,13 +316,18 @@ func TestConnectionTablesAndColumns(t *testing.T) {
 		t.Fatalf("columns: expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var columnsResp struct {
-		Columns []string `json:"columns"`
+		Columns []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"columns"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &columnsResp); err != nil {
 		t.Fatalf("decode columns: %v", err)
 	}
-	if len(columnsResp.Columns) != 2 || columnsResp.Columns[0] != "id" || columnsResp.Columns[1] != "email" {
-		t.Fatalf("unexpected columns: %v", columnsResp.Columns)
+	if len(columnsResp.Columns) != 2 ||
+		columnsResp.Columns[0].Name != "id" || columnsResp.Columns[0].Type != "int64" ||
+		columnsResp.Columns[1].Name != "email" || columnsResp.Columns[1].Type != "string" {
+		t.Fatalf("unexpected columns: %+v", columnsResp.Columns)
 	}
 
 	w = httptest.NewRecorder()
@@ -268,28 +362,28 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	body := map[string]any{
 		"name":                      "applicants-to-typesense",
 		"source_connection_id":      src.ID,
-		"destination_connection_id": dst.ID,
 		"source_table":              "applicants",
+		"destination_connection_id": dst.ID,
 		"destination_table":         "applicants",
 		"chunk_size":                100,
-		"parallel_count":            2,
+		"workers":                   2,
 		"config": map[string]any{
 			"default_sorting_field": "id",
 			"enable_nested_fields":  true,
 		},
 		"relations": []map[string]any{
 			{
-				"name":        "tags",
-				"type":        "belongs_to_many",
-				"table":       "tags",
-				"pivot_table": "applicant_tags",
+				"name":   "tags",
+				"type":   "belongs_to_many",
+				"table":  "tags",
+				"config": map[string]any{"pivot_table": "applicant_tags"},
 			},
 			{
-				"name":        "skills",
-				"type":        "belongs_to_many",
-				"table":       "skills",
-				"pivot_table": "applicant_skills",
-				"active":      false,
+				"name":   "skills",
+				"type":   "belongs_to_many",
+				"table":  "skills",
+				"config": map[string]any{"pivot_table": "applicant_skills"},
+				"active": false,
 			},
 		},
 		"fields": []map[string]any{
@@ -309,6 +403,19 @@ func TestSyncJobsAndLogs(t *testing.T) {
 				"active":           false,
 			},
 		},
+		"rules": []map[string]any{
+			{
+				"field":    "client_id",
+				"operator": "eq",
+				"value":    "123",
+			},
+			{
+				"field":    "status",
+				"operator": "neq",
+				"value":    "archived",
+				"active":   false,
+			},
+		},
 	}
 	payload, _ := json.Marshal(body)
 	w := httptest.NewRecorder()
@@ -326,7 +433,7 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if len(job.Relations) != 2 {
 		t.Fatalf("expected 2 relations, got %+v", job.Relations)
 	}
-	if job.Relations[0].Name != "tags" || job.Relations[0].PivotTable != "applicant_tags" || !job.Relations[0].IsActive() {
+	if job.Relations[0].Name != "tags" || pivotTable(job.Relations[0].Config) != "applicant_tags" || !job.Relations[0].IsActive() {
 		t.Fatalf("expected active tags relation, got %+v", job.Relations[0])
 	}
 	if job.Relations[1].Name != "skills" || job.Relations[1].IsActive() {
@@ -343,6 +450,15 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 	if job.Fields[2].SourceName != "internal_notes" || job.Fields[2].IsActive() {
 		t.Fatalf("expected active=false field preserved, got %+v", job.Fields[2])
+	}
+	if len(job.Rules) != 2 {
+		t.Fatalf("expected 2 rules, got %+v", job.Rules)
+	}
+	if job.Rules[0].Field != "client_id" || job.Rules[0].Operator != "eq" || job.Rules[0].Value != "123" || !job.Rules[0].IsActive() {
+		t.Fatalf("unexpected first rule: %+v", job.Rules[0])
+	}
+	if job.Rules[1].Field != "status" || job.Rules[1].IsActive() {
+		t.Fatalf("expected inactive status rule, got %+v", job.Rules[1])
 	}
 	var jobCfg map[string]any
 	if err := json.Unmarshal(job.Config, &jobCfg); err != nil {
@@ -367,6 +483,9 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if len(job.Fields) != 3 {
 		t.Fatalf("expected preloaded fields, got %+v", job.Fields)
 	}
+	if len(job.Rules) != 2 {
+		t.Fatalf("expected preloaded rules, got %+v", job.Rules)
+	}
 
 	update := map[string]any{
 		"relations": []map[string]any{
@@ -374,7 +493,7 @@ func TestSyncJobsAndLogs(t *testing.T) {
 				"name":        "tags",
 				"type":        "belongs_to_many",
 				"table":       "tags",
-				"pivot_table": "applicant_tags",
+				"config":      map[string]any{"pivot_table": "applicant_tags"},
 				"foreign_key": "applicant_id",
 				"related_key": "tag_id",
 			},
@@ -384,6 +503,13 @@ func TestSyncJobsAndLogs(t *testing.T) {
 				"source_name":      "full_name",
 				"destination_name": "display_name",
 				"destination_type": "string",
+			},
+		},
+		"rules": []map[string]any{
+			{
+				"field":    "client_id",
+				"operator": "eq",
+				"value":    "456",
 			},
 		},
 	}
@@ -403,6 +529,9 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 	if len(job.Fields) != 1 || job.Fields[0].DestinationName != "display_name" {
 		t.Fatalf("expected replaced fields, got %+v", job.Fields)
+	}
+	if len(job.Rules) != 1 || job.Rules[0].Value != "456" {
+		t.Fatalf("expected replaced rules, got %+v", job.Rules)
 	}
 
 	w = httptest.NewRecorder()
@@ -494,6 +623,33 @@ type mockSource struct {
 	rows      []map[string]any
 	schemas   map[string]*connectors.TableSchema
 	tableRows map[string][]map[string]any
+	readHold  <-chan struct{}
+	held      atomic.Bool
+}
+
+type failingSource struct {
+	err error
+}
+
+func (m *failingSource) Open(ctx context.Context) error { return m.err }
+func (m *failingSource) Close() error                   { return nil }
+func (m *failingSource) ListTables(ctx context.Context) ([]string, error) {
+	return nil, m.err
+}
+func (m *failingSource) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
+	return nil, m.err
+}
+func (m *failingSource) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
+	return 0, m.err
+}
+func (m *failingSource) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
+	return m.err
+}
+func (m *failingSource) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
+	return nil, m.err
+}
+func (m *failingSource) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
+	return nil, m.err
 }
 
 func (m *mockSource) Open(ctx context.Context) error { return nil }
@@ -520,20 +676,85 @@ func (m *mockSource) Schema(ctx context.Context, table string) (*connectors.Tabl
 	}
 	return m.schema, nil
 }
-func (m *mockSource) Count(ctx context.Context, table string) (int64, error) {
-	return int64(len(m.rows)), nil
-}
-func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
-	for i := 0; i < len(m.rows); i += chunkSize {
-		end := i + chunkSize
-		if end > len(m.rows) {
-			end = len(m.rows)
+func (m *mockSource) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
+	n := int64(0)
+	for _, row := range m.rows {
+		if matchFilters(row, filters) {
+			n++
 		}
-		if err := fn(m.rows[i:end]); err != nil {
+	}
+	return n, nil
+}
+func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
+	if m.readHold != nil {
+		m.held.Store(true)
+		select {
+		case <-m.readHold:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	var filtered []map[string]any
+	for _, row := range m.rows {
+		if matchFilters(row, filters) {
+			filtered = append(filtered, row)
+		}
+	}
+	for i := 0; i < len(filtered); i += chunkSize {
+		end := i + chunkSize
+		if end > len(filtered) {
+			end = len(filtered)
+		}
+		if err := fn(filtered[i:end]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+func (m *mockSource) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
+	var filtered []map[string]any
+	for _, row := range m.rows {
+		if matchFilters(row, filters) {
+			copied := make(map[string]any, len(row))
+			if len(columns) == 0 {
+				for k, val := range row {
+					copied[k] = val
+				}
+			} else {
+				for _, c := range columns {
+					if val, ok := row[c]; ok {
+						copied[c] = val
+					}
+				}
+			}
+			filtered = append(filtered, copied)
+		}
+	}
+	if order != nil && order.Column != "" {
+		col := order.Column
+		sort.SliceStable(filtered, func(i, j int) bool {
+			a := fmt.Sprint(filtered[i][col])
+			b := fmt.Sprint(filtered[j][col])
+			if order.Desc {
+				return a > b
+			}
+			return a < b
+		})
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(filtered) {
+		return []map[string]any{}, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	end := offset + limit
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	return filtered[offset:end], nil
 }
 func (m *mockSource) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
 	if m.tableRows == nil {
@@ -576,6 +797,7 @@ type mockDest struct {
 	batches  [][]map[string]any
 	config   json.RawMessage
 	onWrite  func([]map[string]any)
+	docs     []map[string]any // for DestinationReader.Query in explore tests
 }
 
 func (m *mockDest) Open(ctx context.Context) error { return nil }
@@ -596,6 +818,55 @@ func (m *mockDest) WriteBatch(ctx context.Context, name string, docs []map[strin
 		onWrite(copied)
 	}
 	return nil
+}
+func (m *mockDest) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	docs := m.docs
+	if docs == nil {
+		var flat []map[string]any
+		for _, batch := range m.batches {
+			flat = append(flat, batch...)
+		}
+		docs = flat
+	}
+	total := int64(len(docs))
+	ordered := docs
+	if order != nil && order.Column != "" {
+		ordered = make([]map[string]any, len(docs))
+		copy(ordered, docs)
+		col := order.Column
+		sort.SliceStable(ordered, func(i, j int) bool {
+			a := fmt.Sprint(ordered[i][col])
+			b := fmt.Sprint(ordered[j][col])
+			if order.Desc {
+				return a > b
+			}
+			return a < b
+		})
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(ordered) {
+		return []map[string]any{}, total, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	end := offset + limit
+	if end > len(ordered) {
+		end = len(ordered)
+	}
+	out := make([]map[string]any, 0, end-offset)
+	for _, row := range ordered[offset:end] {
+		copied := make(map[string]any, len(row))
+		for k, v := range row {
+			copied[k] = v
+		}
+		out = append(out, copied)
+	}
+	return out, total, nil
 }
 
 func TestSyncRunWithMocks(t *testing.T) {
@@ -624,7 +895,7 @@ func TestSyncRunWithMocks(t *testing.T) {
 		SourceTable:             "applicants",
 		DestinationTable:        "applicants",
 		ChunkSize:               2,
-		ParallelCount:           2,
+		Workers:                 2,
 		Config:                  datatypes.JSON([]byte(`{"default_sorting_field":"id","enable_nested_fields":false}`)),
 	}
 	if err := gdb.Create(&job).Error; err != nil {
@@ -697,6 +968,330 @@ func TestSyncRunWithMocks(t *testing.T) {
 	}
 }
 
+func TestSyncRunWithRules(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name:   "dst",
+		Type:   "mock_dst",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "filtered-sync",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "users",
+		DestinationTable:        "users",
+		ChunkSize:               10,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	active := true
+	inactive := false
+	if err := gdb.Create(&models.SyncJobRule{
+		SyncJobID: job.ID,
+		Field:     "client_id",
+		Operator:  models.RuleOperatorEq,
+		Value:     "123",
+		Active:    &active,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&models.SyncJobRule{
+		SyncJobID: job.ID,
+		Field:     "status",
+		Operator:  models.RuleOperatorEq,
+		Value:     "skip",
+		Active:    &inactive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "client_id", Type: connectors.FieldTypeInt64},
+				{Name: "name", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "client_id": int64(123), "name": "keep"},
+			{"id": 2, "client_id": int64(999), "name": "drop"},
+			{"id": 3, "client_id": int64(123), "name": "keep2"},
+		},
+	}
+	dst := &mockDest{}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/run", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var logEntry models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
+		t.Fatal(err)
+	}
+	if logEntry.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", logEntry.Status, logEntry.Message)
+	}
+	if logEntry.RowsTotal == nil || *logEntry.RowsTotal != 2 {
+		t.Fatalf("expected rows_total=2, got %+v", logEntry.RowsTotal)
+	}
+	if logEntry.RowsSynced == nil || *logEntry.RowsSynced != 2 {
+		t.Fatalf("expected rows_synced=2, got %+v", logEntry.RowsSynced)
+	}
+	var names []string
+	for _, batch := range dst.batches {
+		for _, doc := range batch {
+			names = append(names, fmt.Sprint(doc["name"]))
+		}
+	}
+	sort.Strings(names)
+	if len(names) != 2 || names[0] != "keep" || names[1] != "keep2" {
+		t.Fatalf("unexpected synced names: %v", names)
+	}
+}
+
+func TestSyncStartReturnsRunningThenCompletes(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name:   "dst",
+		Type:   "mock_dst",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "test-start",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "applicants",
+		DestinationTable:        "applicants",
+		ChunkSize:               2,
+		Workers:                 1,
+		Config:                  datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "name", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "name": "a"},
+			{"id": 2, "name": "b"},
+		},
+	}
+	dst := &mockDest{}
+
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/start", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("start: expected 202, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var started models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.Status != models.SyncLogStatusRunning {
+		t.Fatalf("expected running, got %s", started.Status)
+	}
+	if started.ID == 0 {
+		t.Fatal("expected sync log id")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	var finished models.SyncLog
+	for {
+		gw := httptest.NewRecorder()
+		greq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/sync-logs/%d", started.ID), nil)
+		r.ServeHTTP(gw, greq)
+		if gw.Code != http.StatusOK {
+			t.Fatalf("get log: expected 200, got %d body=%s", gw.Code, gw.Body.String())
+		}
+		if err := json.Unmarshal(gw.Body.Bytes(), &finished); err != nil {
+			t.Fatal(err)
+		}
+		if finished.Status != models.SyncLogStatusRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for background sync to finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if finished.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", finished.Status, finished.Message)
+	}
+	if finished.RowsSynced == nil || *finished.RowsSynced != 2 {
+		t.Fatalf("expected rows_synced=2, got %+v", finished.RowsSynced)
+	}
+}
+
+func TestSyncStopCancelsRunningJob(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name:   "src",
+		Type:   "mock_src",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name:   "dst",
+		Type:   "mock_dst",
+		Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "test-stop",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "applicants",
+		DestinationTable:        "applicants",
+		ChunkSize:               1,
+		Workers:                 1,
+		Config:                  datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	gate := make(chan struct{})
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "name", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "name": "a"},
+			{"id": 2, "name": "b"},
+		},
+		readHold: gate,
+	}
+	dst := &mockDest{}
+
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/start", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("start: expected 202, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var started models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !src.held.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for sync to block")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	sw := httptest.NewRecorder()
+	sreq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-logs/%d/stop", started.ID), nil)
+	r.ServeHTTP(sw, sreq)
+	if sw.Code != http.StatusOK {
+		t.Fatalf("stop: expected 200, got %d body=%s", sw.Code, sw.Body.String())
+	}
+
+	var stopped models.SyncLog
+	if err := json.Unmarshal(sw.Body.Bytes(), &stopped); err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Status != models.SyncLogStatusStopped {
+		t.Fatalf("expected stopped, got %s (%s)", stopped.Status, stopped.Message)
+	}
+
+	close(gate)
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		var current models.SyncLog
+		if err := gdb.First(&current, started.ID).Error; err == nil && current.FinishedAt != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for stopped sync to settle")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cw := httptest.NewRecorder()
+	creq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-logs/%d/stop", started.ID), nil)
+	r.ServeHTTP(cw, creq)
+	if cw.Code != http.StatusConflict {
+		t.Fatalf("stop again: expected 409, got %d body=%s", cw.Code, cw.Body.String())
+	}
+}
+
 func TestSyncRunUpdatesRowsSyncedAfterEachChunk(t *testing.T) {
 	gdb := setupTestDB(t)
 
@@ -723,7 +1318,7 @@ func TestSyncRunUpdatesRowsSyncedAfterEachChunk(t *testing.T) {
 		SourceTable:             "applicants",
 		DestinationTable:        "applicants",
 		ChunkSize:               2,
-		ParallelCount:           1,
+		Workers:                 1,
 		Config:                  datatypes.JSON([]byte(`{}`)),
 	}
 	if err := gdb.Create(&job).Error; err != nil {
@@ -842,13 +1437,13 @@ func TestSyncRunWithRelations(t *testing.T) {
 		SourceTable:             "applicants",
 		DestinationTable:        "applicants",
 		ChunkSize:               10,
-		ParallelCount:           1,
+		Workers:                 1,
 		Relations: []models.SyncJobRelation{
 			{
-				Name:       "tags",
-				Type:       models.RelationTypeBelongsToMany,
-				Table:      "tags",
-				PivotTable: "applicant_tags",
+				Name:   "tags",
+				Type:   models.RelationTypeBelongsToMany,
+				Table:  "tags",
+				Config: datatypes.JSON([]byte(`{"pivot_table":"applicant_tags"}`)),
 			},
 		},
 	}
@@ -974,31 +1569,41 @@ func TestSyncRunWithNestedHasMany(t *testing.T) {
 		SourceTable:             "users",
 		DestinationTable:        "users",
 		ChunkSize:               10,
-		ParallelCount:           1,
-		Relations: []models.SyncJobRelation{
-			{
-				Name:       "posts",
-				Type:       models.RelationTypeHasMany,
-				Table:      "posts",
-				ForeignKey: "user_id",
-			},
-			{
-				Name:           "comments",
-				Type:           models.RelationTypeHasMany,
-				Table:          "comments",
-				ForeignKey:     "post_id",
-				ParentRelation: "posts",
-			},
-			{
-				Name:           "reactions",
-				Type:           models.RelationTypeHasMany,
-				Table:          "reactions",
-				ForeignKey:     "comment_id",
-				ParentRelation: "comments",
-			},
-		},
+		Workers:                 1,
 	}
 	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	postsRel := models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		Name:       "posts",
+		Type:       models.RelationTypeHasMany,
+		Table:      "posts",
+		ForeignKey: "user_id",
+	}
+	if err := gdb.Create(&postsRel).Error; err != nil {
+		t.Fatal(err)
+	}
+	commentsRel := models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		ParentID:   &postsRel.ID,
+		Name:       "comments",
+		Type:       models.RelationTypeHasMany,
+		Table:      "comments",
+		ForeignKey: "post_id",
+	}
+	if err := gdb.Create(&commentsRel).Error; err != nil {
+		t.Fatal(err)
+	}
+	reactionsRel := models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		ParentID:   &commentsRel.ID,
+		Name:       "reactions",
+		Type:       models.RelationTypeHasMany,
+		Table:      "reactions",
+		ForeignKey: "comment_id",
+	}
+	if err := gdb.Create(&reactionsRel).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -1143,6 +1748,126 @@ func TestSyncRunWithNestedHasMany(t *testing.T) {
 	}
 }
 
+func TestSyncRunWithBelongsToAndRelationFields(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name: "src", Type: "mock_src", Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name: "dst", Type: "mock_dst", Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "posts-with-author",
+		SourceConnectionID:      srcConn.ID,
+		SourceTable:             "posts",
+		DestinationConnectionID: dstConn.ID,
+		DestinationTable:        "posts",
+		ChunkSize:               10,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	authorRel := models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		Name:       "author",
+		Type:       models.RelationTypeBelongsTo,
+		Table:      "users",
+		ForeignKey: "user_id",
+	}
+	if err := gdb.Create(&authorRel).Error; err != nil {
+		t.Fatal(err)
+	}
+	active := true
+	if err := gdb.Create(&models.SyncJobField{
+		SyncJobID:         job.ID,
+		SyncJobRelationID: &authorRel.ID,
+		SourceName:        "email",
+		DestinationName:   "email_address",
+		DestinationType:   "string",
+		Active:            &active,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "title", Type: connectors.FieldTypeString},
+				{Name: "user_id", Type: connectors.FieldTypeInt64},
+			},
+		},
+		schemas: map[string]*connectors.TableSchema{
+			"posts": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "title", Type: connectors.FieldTypeString},
+					{Name: "user_id", Type: connectors.FieldTypeInt64},
+				},
+			},
+			"users": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "name", Type: connectors.FieldTypeString},
+					{Name: "email", Type: connectors.FieldTypeString},
+				},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "title": "hello", "user_id": 10},
+		},
+		tableRows: map[string][]map[string]any{
+			"users": {
+				{"id": 10, "name": "Ada", "email": "ada@example.com"},
+			},
+		},
+	}
+	dst := &mockDest{}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/run", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var logEntry models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
+		t.Fatal(err)
+	}
+	if logEntry.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", logEntry.Status, logEntry.Message)
+	}
+	if len(dst.batches) == 0 || len(dst.batches[0]) == 0 {
+		t.Fatal("expected written docs")
+	}
+	author, ok := dst.batches[0][0]["author"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected author object, got %#v", dst.batches[0][0]["author"])
+	}
+	if fmt.Sprint(author["email_address"]) != "ada@example.com" {
+		t.Fatalf("expected renamed email field, got %#v", author)
+	}
+	if _, exists := author["email"]; exists {
+		t.Fatalf("expected source email removed after rename, got %#v", author)
+	}
+}
+
 func TestEnsureID(t *testing.T) {
 	schema := &connectors.TableSchema{
 		Columns: []connectors.ColumnSchema{
@@ -1158,3 +1883,181 @@ func TestEnsureID(t *testing.T) {
 		t.Fatalf("expected id 10, got %v", docs[0]["id"])
 	}
 }
+
+func TestExploreSyncJobSourceAndExport(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{Name: "src", Type: "mock_src", Config: datatypes.JSON([]byte(`{}`))}
+	dstConn := models.Connection{Name: "dst", Type: "mock_dst", Config: datatypes.JSON([]byte(`{}`))}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "explore-job",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "applicants",
+		DestinationTable:        "applicants",
+		ChunkSize:               50,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	active := true
+	if err := gdb.Create(&models.SyncJobField{
+		SyncJobID:       job.ID,
+		SourceName:      "name",
+		DestinationName: "full_name",
+		Active:          &active,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&models.SyncJobRule{
+		SyncJobID: job.ID,
+		Field:     "status",
+		Operator:  models.RuleOperatorEq,
+		Value:     "active",
+		Active:    &active,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "name", Type: connectors.FieldTypeString},
+				{Name: "status", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "name": "a", "status": "active"},
+			{"id": 2, "name": "b", "status": "inactive"},
+			{"id": 3, "name": "c", "status": "active"},
+		},
+	}
+	dst := &mockDest{
+		docs: []map[string]any{
+			{"id": "1", "full_name": "a"},
+			{"id": "3", "full_name": "c"},
+		},
+	}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+
+	body, _ := json.Marshal(map[string]any{"side": "source", "page": 1, "page_size": 10})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore source status=%d body=%s", w.Code, w.Body.String())
+	}
+	var preview syncsvc.PreviewResult
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 2 {
+		t.Fatalf("expected total 2 active rows, got %d", preview.Total)
+	}
+	if len(preview.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(preview.Rows))
+	}
+	if fmt.Sprint(preview.Rows[0]["full_name"]) != "a" {
+		t.Fatalf("expected renamed field full_name=a, got %#v", preview.Rows[0])
+	}
+	wantCols := []string{"id", "full_name", "status"}
+	if len(preview.Columns) != len(wantCols) {
+		t.Fatalf("expected columns %v, got %v", wantCols, preview.Columns)
+	}
+	for i, c := range wantCols {
+		if preview.Columns[i] != c {
+			t.Fatalf("expected columns %v, got %v", wantCols, preview.Columns)
+		}
+	}
+
+	sortBody, _ := json.Marshal(map[string]any{
+		"side":      "source",
+		"page":      1,
+		"page_size": 10,
+		"sort_by":   "full_name",
+		"sort_dir":  "desc",
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(sortBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore sort status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.SortBy != "full_name" || preview.SortDir != "desc" {
+		t.Fatalf("expected sort full_name desc, got %q %q", preview.SortBy, preview.SortDir)
+	}
+	if len(preview.Rows) < 2 || fmt.Sprint(preview.Rows[0]["full_name"]) != "c" {
+		t.Fatalf("expected full_name desc first row c, got %#v", preview.Rows)
+	}
+
+	exportBody, _ := json.Marshal(map[string]any{"side": "source"})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore/export", job.ID), bytes.NewReader(exportBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", w.Code, w.Body.String())
+	}
+	ct := w.Header().Get("Content-Type")
+	if ct != "text/csv; charset=utf-8" {
+		t.Fatalf("expected csv content-type, got %q", ct)
+	}
+	csvText := w.Body.String()
+	if !bytes.Contains(w.Body.Bytes(), []byte("full_name")) {
+		t.Fatalf("expected full_name header in csv, got %q", csvText)
+	}
+
+	destBody, _ := json.Marshal(map[string]any{"side": "destination", "page": 1, "page_size": 10})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(destBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore destination status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 2 || len(preview.Rows) != 2 {
+		t.Fatalf("expected 2 destination rows, got total=%d rows=%d", preview.Total, len(preview.Rows))
+	}
+
+	badBody, _ := json.Marshal(map[string]any{"side": "neither"})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(badBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad side, got %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/sync-jobs/99999/explore", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing job, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+

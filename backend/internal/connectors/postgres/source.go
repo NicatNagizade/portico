@@ -2,15 +2,15 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/connectors/sqlutil"
 	"github.com/portico/backend/internal/models"
+	postgresDriver "gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 type Config struct {
@@ -25,7 +25,7 @@ type Config struct {
 
 type Source struct {
 	cfg Config
-	db  *sql.DB
+	db  *gorm.DB
 }
 
 func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
@@ -48,12 +48,8 @@ func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
 func (s *Source) Open(ctx context.Context) error {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		s.cfg.Host, s.cfg.Port, s.cfg.User, s.cfg.Password, s.cfg.Database, s.cfg.SSLMode)
-	db, err := sql.Open("pgx", dsn)
+	db, err := sqlutil.Open(ctx, postgresDriver.Open(dsn))
 	if err != nil {
-		return err
-	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
 		return err
 	}
 	s.db = db
@@ -61,37 +57,28 @@ func (s *Source) Open(ctx context.Context) error {
 }
 
 func (s *Source) Close() error {
-	if s.db == nil {
-		return nil
-	}
-	return s.db.Close()
+	return sqlutil.Close(s.db)
 }
 
 func (s *Source) ListTables(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	var tables []string
+	err := s.db.WithContext(ctx).Raw(`
 		SELECT table_name
 		FROM information_schema.tables
-		WHERE table_schema = $1 AND table_type = 'BASE TABLE'
-		ORDER BY table_name`, s.cfg.Schema)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tables []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		tables = append(tables, name)
-	}
-	return tables, rows.Err()
+		WHERE table_schema = ? AND table_type = 'BASE TABLE'
+		ORDER BY table_name`, s.cfg.Schema).Scan(&tables).Error
+	return tables, err
 }
 
 func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
+	type colRow struct {
+		Name     string `gorm:"column:column_name"`
+		DataType string `gorm:"column:data_type"`
+		IsPK     bool   `gorm:"column:is_pk"`
+	}
+	var rows []colRow
 	// DISTINCT ON avoids duplicate columns when a column participates in multiple constraints.
-	rows, err := s.db.QueryContext(ctx, `
+	if err := s.db.WithContext(ctx).Raw(`
 		SELECT DISTINCT ON (c.ordinal_position)
 			c.column_name,
 			c.data_type,
@@ -107,64 +94,42 @@ func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSch
 					AND kcu.column_name = c.column_name
 			) AS is_pk
 		FROM information_schema.columns c
-		WHERE c.table_schema = $1 AND c.table_name = $2
-		ORDER BY c.ordinal_position`, s.cfg.Schema, table)
-	if err != nil {
+		WHERE c.table_schema = ? AND c.table_name = ?
+		ORDER BY c.ordinal_position`, s.cfg.Schema, table).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	schema := &connectors.TableSchema{}
-	for rows.Next() {
-		var name, dataType string
-		var isPK bool
-		if err := rows.Scan(&name, &dataType, &isPK); err != nil {
-			return nil, err
-		}
-		schema.Columns = append(schema.Columns, connectors.ColumnSchema{
-			Name:       name,
-			Type:       mapPostgresType(dataType),
-			PrimaryKey: isPK,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(schema.Columns) == 0 {
+	if len(rows) == 0 {
 		return nil, fmt.Errorf("table %q not found or has no columns", table)
+	}
+	schema := &connectors.TableSchema{}
+	for _, r := range rows {
+		schema.Columns = append(schema.Columns, connectors.ColumnSchema{
+			Name:       r.Name,
+			Type:       mapPostgresType(r.DataType),
+			PrimaryKey: r.IsPK,
+		})
 	}
 	return schema, nil
 }
 
-func (s *Source) Count(ctx context.Context, table string) (int64, error) {
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s", quoteIdent(s.cfg.Schema), quoteIdent(table))
-	var n int64
-	if err := s.db.QueryRowContext(ctx, query).Scan(&n); err != nil {
-		return 0, err
-	}
-	return n, nil
+func (s *Source) table(table string) *gorm.DB {
+	return s.db.Table(quoteIdent(s.cfg.Schema) + "." + quoteIdent(table))
 }
 
-func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, fn func([]map[string]any) error) error {
-	query := fmt.Sprintf("SELECT * FROM %s.%s", quoteIdent(s.cfg.Schema), quoteIdent(table))
-	return sqlutil.ReadChunks(ctx, s.db, query, chunkSize, fn)
+func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
+	return sqlutil.Count(ctx, s.table(table), filters, quoteIdent)
+}
+
+func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
+	return sqlutil.ReadFilteredChunks(ctx, s.table(table), chunkSize, filters, quoteIdent, fn)
+}
+
+func (s *Source) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
+	return sqlutil.QueryPage(ctx, s.table(table), columns, filters, quoteIdent, limit, offset, order)
 }
 
 func (s *Source) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
-	quotedCols := make([]string, len(columns))
-	for i, c := range columns {
-		quotedCols[i] = quoteIdent(c)
-	}
-	from := fmt.Sprintf("%s.%s", quoteIdent(s.cfg.Schema), quoteIdent(table))
-	return sqlutil.QueryRows(
-		ctx,
-		s.db,
-		from,
-		quotedCols,
-		quoteIdent(whereColumn),
-		whereValues,
-		sqlutil.PlaceholdersPostgres,
-	)
+	return sqlutil.QueryRows(ctx, s.table(table), columns, whereColumn, whereValues, quoteIdent)
 }
 
 func mapPostgresType(dataType string) connectors.FieldType {

@@ -1,6 +1,4 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { useEffect, useState } from 'react'
-import { getHealth } from '../api/health'
 
 const navItems = [
   {
@@ -54,25 +52,20 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    to: '/explore',
+    label: 'Explore',
+    hint: 'Preview & CSV',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="11" cy="11" r="6.25" stroke="currentColor" strokeWidth="1.75" />
+        <path d="M16 16l4 4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ]
 
 export default function Layout() {
-  const [health, setHealth] = useState(null)
-
-  useEffect(() => {
-    let active = true
-    getHealth()
-      .then((data) => {
-        if (active) setHealth(data)
-      })
-      .catch(() => {
-        if (active) setHealth(null)
-      })
-    return () => {
-      active = false
-    }
-  }, [])
-
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[272px_1fr]">
       <aside className="relative border-b border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur-md lg:border-b-0 lg:border-r">
@@ -142,43 +135,11 @@ export default function Layout() {
               </NavLink>
             ))}
           </nav>
-
-          <div className="animate-fade-up stagger-2 mt-auto hidden rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-3 lg:block">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="font-mono text-[10px] tracking-[0.16em] text-[var(--text-muted)] uppercase">
-                  API status
-                </p>
-                <p className="mt-1 text-sm font-medium text-[var(--text)]">
-                  {health ? 'Connected' : 'Unreachable'}
-                </p>
-              </div>
-              <span
-                className="relative flex h-2.5 w-2.5"
-                title={health ? 'Healthy' : 'Offline'}
-              >
-                <span
-                  className="absolute inline-flex h-full w-full rounded-full opacity-60"
-                  style={{
-                    background: health ? 'var(--success)' : 'var(--warning)',
-                    animation: 'pulse-dot 1.6s ease-in-out infinite',
-                  }}
-                />
-                <span
-                  className="relative inline-flex h-2.5 w-2.5 rounded-full"
-                  style={{ background: health ? 'var(--success)' : 'var(--warning)' }}
-                />
-              </span>
-            </div>
-            <p className="mt-2 font-mono text-[11px] text-[var(--text-muted)]">localhost:8080</p>
-          </div>
         </div>
       </aside>
 
-      <main className="px-4 py-6 sm:px-8 sm:py-10">
-        <div className="mx-auto max-w-6xl">
-          <Outlet />
-        </div>
+      <main className="min-w-0 px-4 py-4 sm:px-5 sm:py-5">
+        <Outlet />
       </main>
     </div>
   )

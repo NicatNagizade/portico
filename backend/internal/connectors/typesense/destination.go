@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/portico/backend/internal/connectors"
@@ -168,6 +169,84 @@ func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[st
 		}
 	}
 	return nil
+}
+
+// Query reads documents from a Typesense collection (paginated). Used by explore.
+func (d *Destination) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	coll, err := d.client.Collection(name).Retrieve(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("typesense retrieve collection %q: %w", name, err)
+	}
+	queryBy := searchableQueryBy(coll.Fields)
+	if queryBy == "" {
+		return nil, 0, fmt.Errorf("typesense collection %q has no searchable string fields to browse", name)
+	}
+
+	params := &api.SearchCollectionParams{
+		Q:       pointer.String("*"),
+		QueryBy: pointer.String(queryBy),
+		Page:    pointer.Int(offset/limit + 1),
+		PerPage: pointer.Int(limit),
+	}
+	if order != nil && strings.TrimSpace(order.Column) != "" {
+		dir := "asc"
+		if order.Desc {
+			dir = "desc"
+		}
+		params.SortBy = pointer.String(strings.TrimSpace(order.Column) + ":" + dir)
+	}
+
+	result, err := d.client.Collection(name).Documents().Search(ctx, params)
+	if err != nil {
+		return nil, 0, fmt.Errorf("typesense search %q: %w", name, err)
+	}
+
+	var total int64
+	if result.Found != nil {
+		total = int64(*result.Found)
+	}
+
+	rows := []map[string]any{}
+	if result.Hits == nil {
+		return rows, total, nil
+	}
+	for _, hit := range *result.Hits {
+		if hit.Document == nil {
+			continue
+		}
+		doc := make(map[string]any, len(*hit.Document))
+		for k, v := range *hit.Document {
+			doc[k] = v
+		}
+		rows = append(rows, doc)
+	}
+	return rows, total, nil
+}
+
+// searchableQueryBy picks Typesense string fields for q=* browse.
+// The special document id field cannot be used in query_by.
+func searchableQueryBy(fields []api.Field) string {
+	var names []string
+	for _, f := range fields {
+		if f.Name == "" || f.Name == "id" {
+			continue
+		}
+		if f.Index != nil && !*f.Index {
+			continue
+		}
+		switch f.Type {
+		case "string", "string[]":
+			names = append(names, f.Name)
+		}
+	}
+	return strings.Join(names, ",")
 }
 
 func mapFieldType(t connectors.FieldType) string {

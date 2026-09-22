@@ -17,6 +17,13 @@ go mod tidy
 
 On startup the API creates the Postgres database from `DB_NAME` if it does not exist, then auto-migrates.
 
+To wipe all app tables and recreate the schema (destructive):
+
+```bash
+make migrate-refresh
+# or: cd backend && go run ./cmd/migrate refresh
+```
+
 ## Run
 
 ```bash
@@ -112,7 +119,7 @@ Sources and destinations live under `internal/connectors/`. Implement `SourceRea
 
 ## Example: sync with related tables
 
-Many-to-many relations (e.g. applicants ↔ tags via `applicant_tags`) use `belongs_to_many` with a pivot table. One-to-many FK children use `has_many`. Nest deeper levels with `parent_relation` (name of another relation on the same job). Related rows are loaded with separate queries (no JOINs) and attached as Typesense `object[]` fields.
+Many-to-many relations (e.g. applicants ↔ tags via `applicant_tags`) use `belongs_to_many` with `config.pivot_table`. One-to-many FK children use `has_many`; single related objects use `has_one` / `belongs_to`. Nest deeper levels with `parent_id` (id of another relation on the same job; use temporary negative ids in the same create payload). Related rows are loaded with separate queries (no JOINs) and attached as Typesense `object[]` / `object` fields.
 
 ```bash
 curl -X POST http://localhost:8080/sync-jobs \
@@ -120,9 +127,10 @@ curl -X POST http://localhost:8080/sync-jobs \
   -d '{
     "name": "applicants-to-typesense",
     "source_connection_id": 1,
-    "destination_connection_id": 2,
     "source_table": "applicants",
+    "destination_connection_id": 2,
     "destination_table": "applicants",
+    "workers": 2,
     "config": {
       "default_sorting_field": "id",
       "enable_nested_fields": true
@@ -131,7 +139,7 @@ curl -X POST http://localhost:8080/sync-jobs \
       "name": "tags",
       "type": "belongs_to_many",
       "table": "tags",
-      "pivot_table": "applicant_tags",
+      "config": { "pivot_table": "applicant_tags" },
       "active": true
     }],
     "fields": [{
@@ -185,24 +193,27 @@ curl -X POST http://localhost:8080/sync-jobs \
     },
     "relations": [
       {
+        "id": -1,
         "name": "posts",
         "type": "has_many",
         "table": "posts",
         "foreign_key": "user_id"
       },
       {
+        "id": -2,
         "name": "comments",
         "type": "has_many",
         "table": "comments",
         "foreign_key": "post_id",
-        "parent_relation": "posts"
+        "parent_id": -1
       },
       {
+        "id": -3,
         "name": "reactions",
         "type": "has_many",
         "table": "reactions",
         "foreign_key": "comment_id",
-        "parent_relation": "comments"
+        "parent_id": -2
       }
     ]
   }'

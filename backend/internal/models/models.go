@@ -19,10 +19,43 @@ const (
 	SyncLogStatusRunning = "running"
 	SyncLogStatusSuccess = "success"
 	SyncLogStatusFailed  = "failed"
+	SyncLogStatusStopped = "stopped"
 
 	RelationTypeBelongsToMany = "belongs_to_many"
 	RelationTypeHasMany       = "has_many"
+	RelationTypeHasOne        = "has_one"
+	RelationTypeBelongsTo     = "belongs_to"
+
+	RuleOperatorEq        = "eq"
+	RuleOperatorNeq       = "neq"
+	RuleOperatorGt        = "gt"
+	RuleOperatorGte       = "gte"
+	RuleOperatorLt        = "lt"
+	RuleOperatorLte       = "lte"
+	RuleOperatorIn        = "in"
+	RuleOperatorNotIn     = "not_in"
+	RuleOperatorLike      = "like"
+	RuleOperatorIsNull    = "is_null"
+	RuleOperatorIsNotNull = "is_not_null"
 )
+
+// ValidRuleOperator reports whether op is a supported SyncJobRule.operator.
+func ValidRuleOperator(op string) bool {
+	switch op {
+	case RuleOperatorEq, RuleOperatorNeq,
+		RuleOperatorGt, RuleOperatorGte, RuleOperatorLt, RuleOperatorLte,
+		RuleOperatorIn, RuleOperatorNotIn, RuleOperatorLike,
+		RuleOperatorIsNull, RuleOperatorIsNotNull:
+		return true
+	default:
+		return false
+	}
+}
+
+// RuleNeedsValue is false for null-check operators (value is ignored).
+func RuleNeedsValue(op string) bool {
+	return op != RuleOperatorIsNull && op != RuleOperatorIsNotNull
+}
 
 type Connection struct {
 	ID        uint           `json:"id" gorm:"primaryKey"`
@@ -78,34 +111,36 @@ type SyncJob struct {
 	ID                      uint              `json:"id" gorm:"primaryKey"`
 	Name                    string            `json:"name" gorm:"size:255;not null"`
 	SourceConnectionID      uint              `json:"source_connection_id" gorm:"not null;index"`
-	DestinationConnectionID uint              `json:"destination_connection_id" gorm:"not null;index"`
 	SourceTable             string            `json:"source_table" gorm:"size:255;not null"`
+	DestinationConnectionID uint              `json:"destination_connection_id" gorm:"not null;index"`
 	DestinationTable        string            `json:"destination_table" gorm:"size:255;not null"`
 	ChunkSize               int               `json:"chunk_size" gorm:"not null;default:500"`
-	ParallelCount           int               `json:"parallel_count" gorm:"not null;default:2"`
+	Workers                 int               `json:"workers" gorm:"not null;default:2"`
 	Config                  datatypes.JSON    `json:"config,omitempty" gorm:"type:json" swaggertype:"object"`
 	SourceConnection        *Connection       `json:"source_connection,omitempty" gorm:"foreignKey:SourceConnectionID"`
 	DestinationConnection   *Connection       `json:"destination_connection,omitempty" gorm:"foreignKey:DestinationConnectionID"`
 	Relations               []SyncJobRelation `json:"relations,omitempty" gorm:"foreignKey:SyncJobID;constraint:OnDelete:CASCADE"`
 	Fields                  []SyncJobField    `json:"fields,omitempty" gorm:"foreignKey:SyncJobID;constraint:OnDelete:CASCADE"`
+	Rules                   []SyncJobRule     `json:"rules,omitempty" gorm:"foreignKey:SyncJobID;constraint:OnDelete:CASCADE"`
 	Logs                    []SyncLog         `json:"-" gorm:"foreignKey:SyncJobID;constraint:OnDelete:CASCADE"`
 	CreatedAt               time.Time         `json:"created_at"`
 	UpdatedAt               time.Time         `json:"updated_at"`
 }
 
 type SyncJobRelation struct {
-	ID             uint      `json:"id" gorm:"primaryKey"`
-	SyncJobID      uint      `json:"sync_job_id" gorm:"not null;index"`
-	Name           string    `json:"name" gorm:"size:255;not null"`
-	Type           string    `json:"type" gorm:"size:50;not null"`
-	Table          string    `json:"table" gorm:"size:255;not null"`
-	PivotTable     string    `json:"pivot_table" gorm:"size:255"`
-	ForeignKey     string    `json:"foreign_key" gorm:"size:255"`
-	RelatedKey     string    `json:"related_key" gorm:"size:255"`
-	ParentRelation string    `json:"parent_relation" gorm:"size:255"`
-	Active         *bool     `json:"active" gorm:"not null;default:true"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID         uint           `json:"id" gorm:"primaryKey"`
+	SyncJobID  uint           `json:"sync_job_id" gorm:"not null;index"`
+	ParentID   *uint          `json:"parent_id,omitempty" gorm:"index"`
+	Name       string         `json:"name" gorm:"size:255;not null"`
+	Type       string         `json:"type" gorm:"size:50;not null"`
+	Table      string         `json:"table" gorm:"size:255;not null"`
+	ForeignKey string         `json:"foreign_key" gorm:"size:255"`
+	RelatedKey string         `json:"related_key" gorm:"size:255"`
+	Config     datatypes.JSON `json:"config,omitempty" gorm:"type:json" swaggertype:"object"`
+	Active     *bool          `json:"active" gorm:"not null;default:true"`
+	Fields     []SyncJobField `json:"fields,omitempty" gorm:"foreignKey:SyncJobRelationID;constraint:OnDelete:CASCADE"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 func (r SyncJobRelation) IsActive() bool {
@@ -115,6 +150,7 @@ func (r SyncJobRelation) IsActive() bool {
 type SyncJobField struct {
 	ID                uint           `json:"id" gorm:"primaryKey"`
 	SyncJobID         uint           `json:"sync_job_id" gorm:"not null;index"`
+	SyncJobRelationID *uint          `json:"sync_job_relation_id,omitempty" gorm:"index"`
 	SourceName        string         `json:"source_name" gorm:"size:255;not null"`
 	DestinationName   string         `json:"destination_name" gorm:"size:255"`
 	DestinationType   string         `json:"destination_type" gorm:"size:50"`
@@ -126,6 +162,22 @@ type SyncJobField struct {
 
 func (f SyncJobField) IsActive() bool {
 	return f.Active == nil || *f.Active
+}
+
+// SyncJobRule filters source rows before import (AND'd together).
+type SyncJobRule struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	SyncJobID uint      `json:"sync_job_id" gorm:"not null;index"`
+	Field     string    `json:"field" gorm:"size:255;not null"`
+	Operator  string    `json:"operator" gorm:"size:20;not null"`
+	Value     string    `json:"value" gorm:"type:text"`
+	Active    *bool     `json:"active" gorm:"not null;default:true"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (r SyncJobRule) IsActive() bool {
+	return r.Active == nil || *r.Active
 }
 
 type SyncLog struct {

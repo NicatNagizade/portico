@@ -15,7 +15,7 @@ import {
   SecondaryButton,
   TypeChip,
 } from '../components/ui'
-import { formatDate } from '../lib/destinationTypes'
+import { formatDate } from '../lib/format'
 
 export default function ConnectionsPage() {
   const [items, setItems] = useState([])

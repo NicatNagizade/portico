@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { checkConnection } from '../../api/connections'
 import {
   CONNECTION_TYPES,
   defaultConfigForType,
   getConfigFields,
   parseConfig,
 } from '../../lib/connectionTypes'
-import { Field, PrimaryButton, inputClassName } from '../ui'
+import { Field, PrimaryButton, SecondaryButton, inputClassName } from '../ui'
 
 export default function ConnectionForm({ initial, onSubmit, busy, submitLabel }) {
   const [name, setName] = useState(initial?.name || '')
@@ -18,6 +19,9 @@ export default function ConnectionForm({ initial, onSubmit, busy, submitLabel })
     JSON.stringify(parseConfig(initial?.config) || {}, null, 2),
   )
   const [jsonError, setJsonError] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [checkMessage, setCheckMessage] = useState('')
+  const [checkOk, setCheckOk] = useState(false)
 
   const fields = useMemo(() => getConfigFields(type), [type])
   const useRawJson = !fields
@@ -37,25 +41,52 @@ export default function ConnectionForm({ initial, onSubmit, busy, submitLabel })
     }))
   }
 
+  function buildConfig() {
+    if (!useRawJson) {
+      setJsonError('')
+      return config
+    }
+    try {
+      const nextConfig = JSON.parse(rawJson)
+      setJsonError('')
+      return nextConfig
+    } catch {
+      setJsonError('Config must be valid JSON')
+      return null
+    }
+  }
+
   function handleSubmit(event) {
     event.preventDefault()
-    let nextConfig = config
-
-    if (useRawJson) {
-      try {
-        nextConfig = JSON.parse(rawJson)
-        setJsonError('')
-      } catch {
-        setJsonError('Config must be valid JSON')
-        return
-      }
-    }
+    const nextConfig = buildConfig()
+    if (!nextConfig) return
 
     onSubmit({
       name: name.trim(),
       type,
       config: nextConfig,
     })
+  }
+
+  async function handleCheck() {
+    const nextConfig = buildConfig()
+    if (!nextConfig) return
+
+    setChecking(true)
+    setCheckMessage('')
+    setCheckOk(false)
+    try {
+      const body = { type, config: nextConfig }
+      if (initial?.id) body.id = initial.id
+      await checkConnection(body)
+      setCheckOk(true)
+      setCheckMessage('Connection successful.')
+    } catch (err) {
+      setCheckOk(false)
+      setCheckMessage(err.message || 'Connection check failed')
+    } finally {
+      setChecking(false)
+    }
   }
 
   return (
@@ -136,8 +167,20 @@ export default function ConnectionForm({ initial, onSubmit, busy, submitLabel })
         )}
       </div>
 
-      <div className="flex justify-end border-t border-[var(--border)] pt-5">
-        <PrimaryButton type="submit" disabled={busy}>
+      {checkMessage ? (
+        <p
+          className={`text-sm ${checkOk ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}
+          role="status"
+        >
+          {checkMessage}
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-5">
+        <SecondaryButton type="button" disabled={busy || checking} onClick={handleCheck}>
+          {checking ? 'Checking…' : 'Check connection'}
+        </SecondaryButton>
+        <PrimaryButton type="submit" disabled={busy || checking}>
           {busy ? 'Saving…' : submitLabel}
         </PrimaryButton>
       </div>

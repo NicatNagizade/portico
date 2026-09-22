@@ -7,7 +7,10 @@ Sync API + admin UI. Sources (MySQL / Postgres today) → destinations (Typesens
 | Path | Role |
 |------|------|
 | `backend/` | Go API — Gin + GORM |
+| `backend/internal/handlers/` | HTTP handlers split by concern (`handlers.go`, `connections.go`, `sync_jobs.go`, `sync_logs.go`) |
+| `backend/internal/connectors/` | Source/destination connectors; shared SQL in `sqlutil/` |
 | `frontend/` | React admin UI — Vite + Tailwind |
+| `frontend/src/api/` | Thin API clients (`client.js` + resource modules) |
 | `exampleData/` | Seed Postgres DB for nested-relation demos |
 | `SKILLS.md` | Task playbooks (tests, connectors, sync, UI, …) |
 
@@ -20,6 +23,7 @@ make frontend                           # Vite :5173 (proxies /api)
 make test                               # backend tests (needs CGO)
 make swagger                            # regenerate backend/docs/swagger.json only
 make lint                               # frontend oxlint
+make migrate-refresh                    # DESTRUCTIVE: drop all app tables + AutoMigrate
 make example-migrate && make example-seed
 ```
 
@@ -31,6 +35,8 @@ These come from how this project is built day to day. Prefer them over “clever
 
 - **Keep it simple.** Smallest change that works. If a solution needs timeouts, polling intervals, extra tables, custom ordering tags, or parallel code paths — stop and simplify.
 - **Readable over abstract.** Prefer clear neighboring patterns; avoid new frameworks/helpers unless necessary.
+- **DRY.** Do not copy the same logic across connectors, handlers, or pages — extract a small shared helper (or use a package) when repetition appears. Prefer one clear place over “almost the same” copies.
+- **Clear folders.** Keep concerns in the right place (`connectors/<name>/`, `services/sync/`, frontend `api/` + pages). Split oversized files when a second concern grows; do not invent deep package trees for cosmetics.
 - **GORM first.** Use the ORM for app DB reads/writes. Do not reach for raw SQL unless GORM cannot express it cleanly.
 - **No speculative features.** Do not add auto-refresh, request timeouts, or background intervals unless explicitly asked.
 - **Minimal API chatter.** Frontend schema/autocomplete calls only when necessary (cache / load once per connection).
@@ -72,9 +78,10 @@ These come from how this project is built day to day. Prefer them over “clever
 ## Domain model
 
 - **Connections** — `mysql` | `postgres` | `typesense` (| `mongodb` reserved). Config JSON sealed at rest.
-- **Sync jobs** — `source_table` → `destination_table` (collection name for Typesense), plus `chunk_size`, `parallelism`, opaque `config`.
-- **Fields** — optional overrides (rename / type / exclude). Omit all → pass through every source column. `active=false` → exclude from import. Coerce values to the declared destination type before write (e.g. object → string when type is string).
-- **Relations** — `has_many` / `belongs_to_many` (+ optional `parent_relation` for nesting). Always select all related columns. Empty FK/key fields fall back to the related field name. Emit arrays/nested objects in the destination doc — not flattened joins. `active=false` skips the relation.
+- **Sync jobs** — `source_connection_id` → `source_table` → `destination_connection_id` → `destination_table`, plus `chunk_size`, `workers`, opaque `config`.
+- **Fields** — optional overrides (rename / type / exclude). Omit all → pass through every source column. `active=false` → exclude from import. Coerce values to the declared destination type before write (e.g. object → string when type is string). Nullable `sync_job_relation_id` scopes a field to a relation’s related rows; omit for root/source fields.
+- **Rules** — optional source filters (`field` + `operator` + `value`) AND’d before Count/Read. Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `like`, `is_null`, `is_not_null`. `active=false` skips the rule. Applied at the source SQL layer (not post-fetch).
+- **Relations** — `belongs_to_many` / `has_many` / `has_one` / `belongs_to` (+ optional `parent_id` pointing at another `sync_job_relations.id` for nesting). `belongs_to_many` stores `pivot_table` inside relation `config` JSON. Always select all related columns. Empty FK/key fields fall back to the related field name. Emit arrays/nested objects in the destination doc — not flattened joins. `active=false` skips the relation.
 - **Sync logs** — status, `rows_total` (source count at start), `rows_synced` (updated after each chunk), `duration_ms` (updated with progress). Progress UI = `rows_synced / rows_total` — nothing fancier.
 - **Sync behavior** — destination is prepared/cleared then bulk-written in chunks from the job’s `chunk_size`.
 

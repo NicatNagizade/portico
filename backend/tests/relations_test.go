@@ -84,9 +84,9 @@ func TestSchemaWithRelationsSkipsInactive(t *testing.T) {
 		},
 	}
 	got := syncsvc.SchemaWithRelations(base, []models.SyncJobRelation{
-		{Name: "tags", Type: models.RelationTypeBelongsToMany, Active: &trueVal},
-		{Name: "skills", Type: models.RelationTypeBelongsToMany, Active: &falseVal},
-		{Name: "comments", Type: models.RelationTypeHasMany, ParentRelation: "posts", Active: &trueVal},
+		{ID: 1, Name: "tags", Type: models.RelationTypeBelongsToMany, Active: &trueVal},
+		{ID: 2, Name: "skills", Type: models.RelationTypeBelongsToMany, Active: &falseVal},
+		{ID: 3, Name: "comments", Type: models.RelationTypeHasMany, ParentID: uintPtr(1), Active: &trueVal},
 	})
 	if len(got.Columns) != 2 || got.Columns[1].Name != "tags" {
 		t.Fatalf("expected only active root relation in schema, got %+v", got.Columns)
@@ -108,3 +108,23 @@ func TestSchemaWithRelationsIncludesHasManyRoot(t *testing.T) {
 	}
 }
 
+func TestSchemaWithRelationsIncludesHasOneAsObject(t *testing.T) {
+	trueVal := true
+	base := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+		},
+	}
+	got := syncsvc.SchemaWithRelations(base, []models.SyncJobRelation{
+		{Name: "profile", Type: models.RelationTypeHasOne, Active: &trueVal},
+		{Name: "company", Type: models.RelationTypeBelongsTo, Active: &trueVal},
+	})
+	if len(got.Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %+v", got.Columns)
+	}
+	if got.Columns[1].Type != connectors.FieldTypeObject || got.Columns[2].Type != connectors.FieldTypeObject {
+		t.Fatalf("expected has_one/belongs_to as object, got %+v", got.Columns)
+	}
+}
+
+func uintPtr(v uint) *uint { return &v }

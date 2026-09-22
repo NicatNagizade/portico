@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { parsePage } from '../api/pagination'
 import { listSyncLogs } from '../api/syncLogs'
 import StatusBadge from '../components/StatusBadge'
 import SyncProgress from '../components/SyncProgress'
@@ -18,7 +19,7 @@ import {
   inputClassName,
   tableClassName,
 } from '../components/ui'
-import { formatDate, formatDuration } from '../lib/destinationTypes'
+import { formatDate, formatDuration } from '../lib/format'
 
 const PAGE_SIZE = 20
 
@@ -47,11 +48,6 @@ function RefreshIcon({ spinning }) {
       />
     </svg>
   )
-}
-
-function parsePage(raw) {
-  const n = Number.parseInt(raw || '1', 10)
-  return Number.isFinite(n) && n > 0 ? n : 1
 }
 
 function buildParams({ syncJobId, page }) {

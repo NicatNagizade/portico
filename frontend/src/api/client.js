@@ -47,3 +47,27 @@ export async function request(path, options = {}) {
 
   return response.json()
 }
+
+/** POST/GET a binary download and save it via a temporary anchor. */
+export async function download(path, { method = 'GET', body, filename } = {}) {
+  const init = { method, headers: {} }
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json'
+    init.body = JSON.stringify(body)
+  }
+  const response = await fetch(`${API_BASE}${path}`, init)
+  if (!response.ok) {
+    throw new ApiError(await parseError(response), response.status)
+  }
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const match = disposition.match(/filename="([^"]+)"/)
+  const name = match?.[1] || filename || 'download'
+  const url = URL.createObjectURL(await response.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
