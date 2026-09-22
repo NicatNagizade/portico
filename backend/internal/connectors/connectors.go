@@ -37,12 +37,19 @@ type Filter struct {
 	Value    string
 }
 
+// Order is an optional sort for explore Query calls. Nil means unspecified order.
+type Order struct {
+	Column string
+	Desc   bool
+}
+
 type SourceReader interface {
 	Open(ctx context.Context) error
 	ListTables(ctx context.Context) ([]string, error)
 	Schema(ctx context.Context, table string) (*TableSchema, error)
 	Count(ctx context.Context, table string, filters []Filter) (int64, error)
 	ReadChunks(ctx context.Context, table string, chunkSize int, filters []Filter, fn func([]map[string]any) error) error
+	Query(ctx context.Context, table string, columns []string, filters []Filter, limit, offset int, order *Order) ([]map[string]any, error)
 	QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error)
 	Close() error
 }
@@ -53,6 +60,13 @@ type DestinationWriter interface {
 	// each connector interprets keys it understands and ignores the rest / applies its own defaults.
 	Prepare(ctx context.Context, name string, schema *TableSchema, config json.RawMessage) error
 	WriteBatch(ctx context.Context, name string, docs []map[string]any) error
+	Close() error
+}
+
+// DestinationReader reads documents already stored in a destination (explore / export).
+type DestinationReader interface {
+	Open(ctx context.Context) error
+	Query(ctx context.Context, name string, limit, offset int, order *Order) (rows []map[string]any, total int64, err error)
 	Close() error
 }
 

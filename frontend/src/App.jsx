@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import ConnectionsPage from './pages/ConnectionsPage'
 import ConnectionFormPage from './pages/ConnectionFormPage'
+import ExplorePage from './pages/ExplorePage'
 import SyncJobsPage from './pages/SyncJobsPage'
 import SyncJobFormPage from './pages/SyncJobFormPage'
 import SyncJobDetailPage from './pages/SyncJobDetailPage'
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="sync-jobs/new" element={<SyncJobFormPage />} />
           <Route path="sync-jobs/:id" element={<SyncJobDetailPage />} />
           <Route path="sync-jobs/:id/edit" element={<SyncJobFormPage />} />
+          <Route path="explore" element={<ExplorePage />} />
           <Route path="sync-logs" element={<SyncLogsPage />} />
           <Route path="sync-logs/:id" element={<SyncLogDetailPage />} />
         </Route>

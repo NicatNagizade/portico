@@ -1,16 +1,8 @@
-import { request } from './client'
-import { normalizePage } from './pagination'
-
-function buildListQuery({ page, pageSize } = {}) {
-  const params = new URLSearchParams()
-  if (page) params.set('page', String(page))
-  if (pageSize) params.set('page_size', String(pageSize))
-  const query = params.toString()
-  return query ? `?${query}` : ''
-}
+import { download, request } from './client'
+import { buildQuery, normalizePage } from './pagination'
 
 export function listSyncJobs({ page = 1, pageSize = 20 } = {}) {
-  return request(`/sync-jobs${buildListQuery({ page, pageSize })}`).then(normalizePage)
+  return request(`/sync-jobs${buildQuery({ page, page_size: pageSize })}`).then(normalizePage)
 }
 
 export function getSyncJob(id) {
@@ -35,4 +27,24 @@ export function runSyncJob(id) {
 
 export function startSyncJob(id) {
   return request(`/sync-jobs/${id}/start`, { method: 'POST' })
+}
+
+export function exploreSyncJob(id, { side, page = 1, pageSize = 50, sortBy = '', sortDir = '' } = {}) {
+  const body = { side, page, page_size: pageSize }
+  if (sortBy) {
+    body.sort_by = sortBy
+    body.sort_dir = sortDir || 'asc'
+  }
+  return request(`/sync-jobs/${id}/explore`, {
+    method: 'POST',
+    body,
+  })
+}
+
+export function exportSyncJobCSV(id, { side } = {}) {
+  return download(`/sync-jobs/${id}/explore/export`, {
+    method: 'POST',
+    body: { side },
+    filename: `explore-${side}.csv`,
+  })
 }

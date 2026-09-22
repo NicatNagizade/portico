@@ -645,6 +645,9 @@ func (m *failingSource) Count(ctx context.Context, table string, filters []conne
 func (m *failingSource) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
 	return m.err
 }
+func (m *failingSource) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
+	return nil, m.err
+}
 func (m *failingSource) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
 	return nil, m.err
 }
@@ -708,6 +711,51 @@ func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int
 	}
 	return nil
 }
+func (m *mockSource) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
+	var filtered []map[string]any
+	for _, row := range m.rows {
+		if matchFilters(row, filters) {
+			copied := make(map[string]any, len(row))
+			if len(columns) == 0 {
+				for k, val := range row {
+					copied[k] = val
+				}
+			} else {
+				for _, c := range columns {
+					if val, ok := row[c]; ok {
+						copied[c] = val
+					}
+				}
+			}
+			filtered = append(filtered, copied)
+		}
+	}
+	if order != nil && order.Column != "" {
+		col := order.Column
+		sort.SliceStable(filtered, func(i, j int) bool {
+			a := fmt.Sprint(filtered[i][col])
+			b := fmt.Sprint(filtered[j][col])
+			if order.Desc {
+				return a > b
+			}
+			return a < b
+		})
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(filtered) {
+		return []map[string]any{}, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	end := offset + limit
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	return filtered[offset:end], nil
+}
 func (m *mockSource) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
 	if m.tableRows == nil {
 		return nil, nil
@@ -749,6 +797,7 @@ type mockDest struct {
 	batches  [][]map[string]any
 	config   json.RawMessage
 	onWrite  func([]map[string]any)
+	docs     []map[string]any // for DestinationReader.Query in explore tests
 }
 
 func (m *mockDest) Open(ctx context.Context) error { return nil }
@@ -769,6 +818,55 @@ func (m *mockDest) WriteBatch(ctx context.Context, name string, docs []map[strin
 		onWrite(copied)
 	}
 	return nil
+}
+func (m *mockDest) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	docs := m.docs
+	if docs == nil {
+		var flat []map[string]any
+		for _, batch := range m.batches {
+			flat = append(flat, batch...)
+		}
+		docs = flat
+	}
+	total := int64(len(docs))
+	ordered := docs
+	if order != nil && order.Column != "" {
+		ordered = make([]map[string]any, len(docs))
+		copy(ordered, docs)
+		col := order.Column
+		sort.SliceStable(ordered, func(i, j int) bool {
+			a := fmt.Sprint(ordered[i][col])
+			b := fmt.Sprint(ordered[j][col])
+			if order.Desc {
+				return a > b
+			}
+			return a < b
+		})
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(ordered) {
+		return []map[string]any{}, total, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	end := offset + limit
+	if end > len(ordered) {
+		end = len(ordered)
+	}
+	out := make([]map[string]any, 0, end-offset)
+	for _, row := range ordered[offset:end] {
+		copied := make(map[string]any, len(row))
+		for k, v := range row {
+			copied[k] = v
+		}
+		out = append(out, copied)
+	}
+	return out, total, nil
 }
 
 func TestSyncRunWithMocks(t *testing.T) {
@@ -1785,3 +1883,181 @@ func TestEnsureID(t *testing.T) {
 		t.Fatalf("expected id 10, got %v", docs[0]["id"])
 	}
 }
+
+func TestExploreSyncJobSourceAndExport(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{Name: "src", Type: "mock_src", Config: datatypes.JSON([]byte(`{}`))}
+	dstConn := models.Connection{Name: "dst", Type: "mock_dst", Config: datatypes.JSON([]byte(`{}`))}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "explore-job",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "applicants",
+		DestinationTable:        "applicants",
+		ChunkSize:               50,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	active := true
+	if err := gdb.Create(&models.SyncJobField{
+		SyncJobID:       job.ID,
+		SourceName:      "name",
+		DestinationName: "full_name",
+		Active:          &active,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&models.SyncJobRule{
+		SyncJobID: job.ID,
+		Field:     "status",
+		Operator:  models.RuleOperatorEq,
+		Value:     "active",
+		Active:    &active,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "name", Type: connectors.FieldTypeString},
+				{Name: "status", Type: connectors.FieldTypeString},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "name": "a", "status": "active"},
+			{"id": 2, "name": "b", "status": "inactive"},
+			{"id": 3, "name": "c", "status": "active"},
+		},
+	}
+	dst := &mockDest{
+		docs: []map[string]any{
+			{"id": "1", "full_name": "a"},
+			{"id": "3", "full_name": "c"},
+		},
+	}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+
+	body, _ := json.Marshal(map[string]any{"side": "source", "page": 1, "page_size": 10})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore source status=%d body=%s", w.Code, w.Body.String())
+	}
+	var preview syncsvc.PreviewResult
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 2 {
+		t.Fatalf("expected total 2 active rows, got %d", preview.Total)
+	}
+	if len(preview.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(preview.Rows))
+	}
+	if fmt.Sprint(preview.Rows[0]["full_name"]) != "a" {
+		t.Fatalf("expected renamed field full_name=a, got %#v", preview.Rows[0])
+	}
+	wantCols := []string{"id", "full_name", "status"}
+	if len(preview.Columns) != len(wantCols) {
+		t.Fatalf("expected columns %v, got %v", wantCols, preview.Columns)
+	}
+	for i, c := range wantCols {
+		if preview.Columns[i] != c {
+			t.Fatalf("expected columns %v, got %v", wantCols, preview.Columns)
+		}
+	}
+
+	sortBody, _ := json.Marshal(map[string]any{
+		"side":      "source",
+		"page":      1,
+		"page_size": 10,
+		"sort_by":   "full_name",
+		"sort_dir":  "desc",
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(sortBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore sort status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.SortBy != "full_name" || preview.SortDir != "desc" {
+		t.Fatalf("expected sort full_name desc, got %q %q", preview.SortBy, preview.SortDir)
+	}
+	if len(preview.Rows) < 2 || fmt.Sprint(preview.Rows[0]["full_name"]) != "c" {
+		t.Fatalf("expected full_name desc first row c, got %#v", preview.Rows)
+	}
+
+	exportBody, _ := json.Marshal(map[string]any{"side": "source"})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore/export", job.ID), bytes.NewReader(exportBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", w.Code, w.Body.String())
+	}
+	ct := w.Header().Get("Content-Type")
+	if ct != "text/csv; charset=utf-8" {
+		t.Fatalf("expected csv content-type, got %q", ct)
+	}
+	csvText := w.Body.String()
+	if !bytes.Contains(w.Body.Bytes(), []byte("full_name")) {
+		t.Fatalf("expected full_name header in csv, got %q", csvText)
+	}
+
+	destBody, _ := json.Marshal(map[string]any{"side": "destination", "page": 1, "page_size": 10})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(destBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore destination status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 2 || len(preview.Rows) != 2 {
+		t.Fatalf("expected 2 destination rows, got total=%d rows=%d", preview.Total, len(preview.Rows))
+	}
+
+	badBody, _ := json.Marshal(map[string]any{"side": "neither"})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(badBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad side, got %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/sync-jobs/99999/explore", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing job, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+

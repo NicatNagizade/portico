@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { parsePage } from '../api/pagination'
 import { deleteSyncJob, listSyncJobs, startSyncJob } from '../api/syncJobs'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
@@ -101,11 +102,6 @@ function DeleteIcon() {
       />
     </Icon>
   )
-}
-
-function parsePage(raw) {
-  const n = Number.parseInt(raw || '1', 10)
-  return Number.isFinite(n) && n > 0 ? n : 1
 }
 
 export default function SyncJobsPage() {

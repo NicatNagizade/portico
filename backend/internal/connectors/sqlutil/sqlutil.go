@@ -5,8 +5,54 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/portico/backend/internal/connectors"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
+
+// Open opens a GORM DB with a silent logger and pings it.
+func Open(ctx context.Context, dialector gorm.Dialector) (*gorm.DB, error) {
+	db, err := gorm.Open(dialector, &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return nil, err
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+// Close closes the underlying SQL DB when present.
+func Close(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+}
+
+// Count applies filters and returns row count.
+func Count(ctx context.Context, db *gorm.DB, filters []connectors.Filter, quoteIdent func(string) string) (int64, error) {
+	q, err := ApplyFilters(db.WithContext(ctx), filters, quoteIdent)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	if err := q.Count(&n).Error; err != nil {
+		return 0, err
+	}
+	return n, nil
+}
 
 // ReadChunks streams rows from a prepared GORM query and invokes fn per batch.
 func ReadChunks(ctx context.Context, db *gorm.DB, chunkSize int, fn func([]map[string]any) error) error {
@@ -59,31 +105,104 @@ func ReadChunks(ctx context.Context, db *gorm.DB, chunkSize int, fn func([]map[s
 	return nil
 }
 
+// ReadFilteredChunks applies filters then streams rows in chunks.
+func ReadFilteredChunks(
+	ctx context.Context,
+	db *gorm.DB,
+	chunkSize int,
+	filters []connectors.Filter,
+	quoteIdent func(string) string,
+	fn func([]map[string]any) error,
+) error {
+	q, err := ApplyFilters(db, filters, quoteIdent)
+	if err != nil {
+		return err
+	}
+	return ReadChunks(ctx, q, chunkSize, fn)
+}
+
 // QueryRows runs a SELECT with an IN filter and returns all matching rows.
+// columns and whereColumn are unquoted identifiers; quoteIdent is applied.
 func QueryRows(
 	ctx context.Context,
 	db *gorm.DB,
 	columns []string,
 	whereColumn string,
 	whereValues []any,
+	quoteIdent func(string) string,
 ) ([]map[string]any, error) {
 	if len(whereValues) == 0 {
 		return nil, nil
 	}
 	q := db.WithContext(ctx)
 	if len(columns) > 0 {
-		q = q.Select(strings.Join(columns, ", "))
+		quoted := make([]string, len(columns))
+		for i, c := range columns {
+			quoted[i] = quoteIdent(c)
+		}
+		q = q.Select(strings.Join(quoted, ", "))
 	}
 	var out []map[string]any
-	if err := q.Where(whereColumn+" IN ?", whereValues).Find(&out).Error; err != nil {
+	if err := q.Where(quoteIdent(whereColumn)+" IN ?", whereValues).Find(&out).Error; err != nil {
 		return nil, err
 	}
-	for _, row := range out {
+	normalizeMaps(out)
+	return out, nil
+}
+
+// QueryPage selects rows with optional column list, filters, limit, offset, and order.
+// Empty columns selects all columns. limit <= 0 defaults to 50.
+func QueryPage(
+	ctx context.Context,
+	db *gorm.DB,
+	columns []string,
+	filters []connectors.Filter,
+	quoteIdent func(string) string,
+	limit, offset int,
+	order *connectors.Order,
+) ([]map[string]any, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q, err := ApplyFilters(db.WithContext(ctx), filters, quoteIdent)
+	if err != nil {
+		return nil, err
+	}
+	if len(columns) > 0 {
+		quoted := make([]string, len(columns))
+		for i, c := range columns {
+			quoted[i] = quoteIdent(c)
+		}
+		q = q.Select(strings.Join(quoted, ", "))
+	}
+	if order != nil && strings.TrimSpace(order.Column) != "" {
+		col := quoteIdent(strings.TrimSpace(order.Column))
+		dir := " ASC"
+		if order.Desc {
+			dir = " DESC"
+		}
+		q = q.Order(col + dir)
+	}
+	var out []map[string]any
+	if err := q.Limit(limit).Offset(offset).Find(&out).Error; err != nil {
+		return nil, err
+	}
+	normalizeMaps(out)
+	if out == nil {
+		out = []map[string]any{}
+	}
+	return out, nil
+}
+
+func normalizeMaps(rows []map[string]any) {
+	for _, row := range rows {
 		for k, v := range row {
 			row[k] = NormalizeValue(v, "")
 		}
 	}
-	return out, nil
 }
 
 // NormalizeValue converts driver values into JSON-friendly Go types.

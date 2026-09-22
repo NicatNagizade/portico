@@ -1,0 +1,22 @@
+---
+description: Prefer simple, readable, DRY code and clear folder structure
+alwaysApply: true
+---
+
+# Simple, readable, DRY
+
+When implementing anything in this repo:
+
+- **Keep it simple.** Smallest change that works. No speculative features (timeouts, polling, extra abstractions).
+- **Readable over clever.** Clear names, short functions, match neighboring patterns.
+- **DRY.** Share logic once (helpers, packages) when the same code would otherwise be copied. Do not invent frameworks.
+- **Folder structure.** Put code next to its concern (`connectors/<name>/`, `services/sync/`, page + `api/` on the frontend). Avoid dumping unrelated helpers into giant files when a small shared package/module is clearer.
+- **Packages OK.** Use a library when it removes boilerplate; wrap it thinly or not at all.
+
+```text
+❌ Copy the same Query/normalize loop into MySQL and Postgres
+✅ One sqlutil helper both sources call
+
+❌ Huge page with useMemo/useCallback and unused UX
+✅ Straight state + load function matching other pages
+```

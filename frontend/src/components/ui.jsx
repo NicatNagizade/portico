@@ -242,7 +242,7 @@ export const tableClassName = 'w-full min-w-[720px] border-collapse text-left te
 
 export function TableShell({ children, footer }) {
   return (
-    <div className="animate-fade-up overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-md)]">
+    <div className="animate-fade-up min-w-0 max-w-full overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-md)]">
       <div className="overflow-x-auto">{children}</div>
       {footer}
     </div>

@@ -605,6 +605,124 @@
                 }
             }
         },
+        "/sync-jobs/{id}/explore": {
+            "post": {
+                "description": "Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync-jobs"
+                ],
+                "summary": "Explore sync job data",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Explore options",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ExploreRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sync.PreviewResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sync-jobs/{id}/explore/export": {
+            "post": {
+                "description": "Downloads matching source or destination rows as CSV.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/csv"
+                ],
+                "tags": [
+                    "sync-jobs"
+                ],
+                "summary": "Export sync job explore data as CSV",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Export options",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ExploreExportRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CSV file",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sync-jobs/{id}/run": {
             "post": {
                 "description": "Runs the sync synchronously and returns the finished sync log.",
@@ -903,6 +1021,46 @@
                 }
             }
         },
+        "handlers.ExploreExportRequest": {
+            "type": "object",
+            "required": [
+                "side"
+            ],
+            "properties": {
+                "side": {
+                    "type": "string",
+                    "example": "source"
+                }
+            }
+        },
+        "handlers.ExploreRequest": {
+            "type": "object",
+            "required": [
+                "side"
+            ],
+            "properties": {
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 50
+                },
+                "side": {
+                    "type": "string",
+                    "example": "source"
+                },
+                "sort_by": {
+                    "type": "string",
+                    "example": "id"
+                },
+                "sort_dir": {
+                    "type": "string",
+                    "example": "asc"
+                }
+            }
+        },
         "handlers.SyncJobListResponse": {
             "type": "object",
             "properties": {
@@ -1184,6 +1342,42 @@
                     "$ref": "#/definitions/models.SyncJob"
                 },
                 "sync_job_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "sync.PreviewResult": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "side": {
+                    "type": "string"
+                },
+                "sort_by": {
+                    "type": "string"
+                },
+                "sort_dir": {
+                    "type": "string"
+                },
+                "total": {
                     "type": "integer"
                 }
             }

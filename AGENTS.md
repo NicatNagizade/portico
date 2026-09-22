@@ -7,7 +7,10 @@ Sync API + admin UI. Sources (MySQL / Postgres today) → destinations (Typesens
 | Path | Role |
 |------|------|
 | `backend/` | Go API — Gin + GORM |
+| `backend/internal/handlers/` | HTTP handlers split by concern (`handlers.go`, `connections.go`, `sync_jobs.go`, `sync_logs.go`) |
+| `backend/internal/connectors/` | Source/destination connectors; shared SQL in `sqlutil/` |
 | `frontend/` | React admin UI — Vite + Tailwind |
+| `frontend/src/api/` | Thin API clients (`client.js` + resource modules) |
 | `exampleData/` | Seed Postgres DB for nested-relation demos |
 | `SKILLS.md` | Task playbooks (tests, connectors, sync, UI, …) |
 
@@ -32,6 +35,8 @@ These come from how this project is built day to day. Prefer them over “clever
 
 - **Keep it simple.** Smallest change that works. If a solution needs timeouts, polling intervals, extra tables, custom ordering tags, or parallel code paths — stop and simplify.
 - **Readable over abstract.** Prefer clear neighboring patterns; avoid new frameworks/helpers unless necessary.
+- **DRY.** Do not copy the same logic across connectors, handlers, or pages — extract a small shared helper (or use a package) when repetition appears. Prefer one clear place over “almost the same” copies.
+- **Clear folders.** Keep concerns in the right place (`connectors/<name>/`, `services/sync/`, frontend `api/` + pages). Split oversized files when a second concern grows; do not invent deep package trees for cosmetics.
 - **GORM first.** Use the ORM for app DB reads/writes. Do not reach for raw SQL unless GORM cannot express it cleanly.
 - **No speculative features.** Do not add auto-refresh, request timeouts, or background intervals unless explicitly asked.
 - **Minimal API chatter.** Frontend schema/autocomplete calls only when necessary (cache / load once per connection).

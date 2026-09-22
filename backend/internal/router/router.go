@@ -35,6 +35,8 @@ func New(h *handlers.Handlers) *gin.Engine {
 	r.DELETE("/sync-jobs/:id", h.DeleteSyncJob)
 	r.POST("/sync-jobs/:id/run", h.RunSyncJob)
 	r.POST("/sync-jobs/:id/start", h.StartSyncJob)
+	r.POST("/sync-jobs/:id/explore", h.ExploreSyncJob)
+	r.POST("/sync-jobs/:id/explore/export", h.ExportSyncJobExplore)
 
 	r.GET("/sync-logs", h.ListSyncLogs)
 	r.GET("/sync-logs/:id", h.GetSyncLog)

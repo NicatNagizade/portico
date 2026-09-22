@@ -11,7 +11,6 @@ import (
 	"github.com/portico/backend/internal/models"
 	postgresDriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 type Config struct {
@@ -49,18 +48,8 @@ func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
 func (s *Source) Open(ctx context.Context) error {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		s.cfg.Host, s.cfg.Port, s.cfg.User, s.cfg.Password, s.cfg.Database, s.cfg.SSLMode)
-	db, err := gorm.Open(postgresDriver.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
+	db, err := sqlutil.Open(ctx, postgresDriver.Open(dsn))
 	if err != nil {
-		return err
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		return err
-	}
-	if err := sqlDB.PingContext(ctx); err != nil {
-		_ = sqlDB.Close()
 		return err
 	}
 	s.db = db
@@ -68,14 +57,7 @@ func (s *Source) Open(ctx context.Context) error {
 }
 
 func (s *Source) Close() error {
-	if s.db == nil {
-		return nil
-	}
-	sqlDB, err := s.db.DB()
-	if err != nil {
-		return err
-	}
-	return sqlDB.Close()
+	return sqlutil.Close(s.db)
 }
 
 func (s *Source) ListTables(ctx context.Context) ([]string, error) {
@@ -130,42 +112,24 @@ func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSch
 	return schema, nil
 }
 
-func (s *Source) tableRef(table string) string {
-	return quoteIdent(s.cfg.Schema) + "." + quoteIdent(table)
+func (s *Source) table(table string) *gorm.DB {
+	return s.db.Table(quoteIdent(s.cfg.Schema) + "." + quoteIdent(table))
 }
 
 func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
-	q, err := sqlutil.ApplyFilters(s.db.WithContext(ctx).Table(s.tableRef(table)), filters, quoteIdent)
-	if err != nil {
-		return 0, err
-	}
-	var n int64
-	if err := q.Count(&n).Error; err != nil {
-		return 0, err
-	}
-	return n, nil
+	return sqlutil.Count(ctx, s.table(table), filters, quoteIdent)
 }
 
 func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
-	q, err := sqlutil.ApplyFilters(s.db.Table(s.tableRef(table)), filters, quoteIdent)
-	if err != nil {
-		return err
-	}
-	return sqlutil.ReadChunks(ctx, q, chunkSize, fn)
+	return sqlutil.ReadFilteredChunks(ctx, s.table(table), chunkSize, filters, quoteIdent, fn)
+}
+
+func (s *Source) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
+	return sqlutil.QueryPage(ctx, s.table(table), columns, filters, quoteIdent, limit, offset, order)
 }
 
 func (s *Source) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
-	quotedCols := make([]string, len(columns))
-	for i, c := range columns {
-		quotedCols[i] = quoteIdent(c)
-	}
-	return sqlutil.QueryRows(
-		ctx,
-		s.db.Table(s.tableRef(table)),
-		quotedCols,
-		quoteIdent(whereColumn),
-		whereValues,
-	)
+	return sqlutil.QueryRows(ctx, s.table(table), columns, whereColumn, whereValues, quoteIdent)
 }
 
 func mapPostgresType(dataType string) connectors.FieldType {
