@@ -24,10 +24,11 @@ make test                               # backend tests (needs CGO)
 make swagger                            # regenerate backend/docs/swagger.json only
 make lint                               # frontend oxlint
 make migrate-refresh                    # DESTRUCTIVE: drop all app tables + AutoMigrate
+make import-connections                 # upsert from backend/connections.json (see .example)
 make example-migrate && make example-seed
 ```
 
-No Docker in the default workflow — run locally with `go run` / Vite. App DB is created on migrate if missing (`DB_*` vars, never `DATABASE_URL`).
+No Docker in the default workflow — run locally with `go run` / Vite. App DB is created on migrate if missing (`DB_*` vars, never `DATABASE_URL`). Copy `backend/connections.json.example` → `backend/connections.json` (gitignored) to bootstrap connector credentials into the DB; optional `CONNECTIONS_FILE` overrides the path.
 
 ## Working style (non-negotiable)
 

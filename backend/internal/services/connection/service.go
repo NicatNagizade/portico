@@ -10,7 +10,10 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrNotFound = errors.New("connection not found")
+var (
+	ErrNotFound  = errors.New("connection not found")
+	ErrAmbiguous = errors.New("multiple connections match name and type")
+)
 
 type Service struct {
 	db *gorm.DB
@@ -56,6 +59,23 @@ func (s *Service) Get(id uint) (*models.Connection, error) {
 		return nil, err
 	}
 	return &item, nil
+}
+
+// FindByNameAndType returns the single connection with the given name and type.
+// ErrNotFound if none; ErrAmbiguous if more than one.
+func (s *Service) FindByNameAndType(name, typ string) (*models.Connection, error) {
+	var items []models.Connection
+	if err := s.db.Where("name = ? AND type = ?", name, typ).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	switch len(items) {
+	case 0:
+		return nil, ErrNotFound
+	case 1:
+		return &items[0], nil
+	default:
+		return nil, ErrAmbiguous
+	}
 }
 
 func (s *Service) Create(in CreateInput) (*models.Connection, error) {

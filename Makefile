@@ -1,6 +1,6 @@
 .PHONY: help setup setup-backend setup-frontend \
 	api frontend test build tidy swagger lint preview \
-	migrate-refresh example-migrate example-seed
+	migrate-refresh import-connections example-migrate example-seed
 
 BACKEND := backend
 FRONTEND := frontend
@@ -46,6 +46,9 @@ lint: ## Lint frontend
 
 migrate-refresh: ## DESTRUCTIVE: drop all app tables and re-run AutoMigrate
 	cd $(BACKEND) && go run ./cmd/migrate refresh
+
+import-connections: ## Upsert connections from backend/connections.json into the DB
+	cd $(BACKEND) && go run ./cmd/import-connections
 
 example-migrate: ## Create example Postgres DB + tables
 	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env

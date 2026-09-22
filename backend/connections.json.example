@@ -1,0 +1,26 @@
+{
+  "connections": [
+    {
+      "name": "local-postgres",
+      "type": "postgres",
+      "config": {
+        "host": "localhost",
+        "port": 5432,
+        "user": "postgres",
+        "password": "postgres",
+        "database": "example",
+        "sslmode": "disable"
+      }
+    },
+    {
+      "name": "local-typesense",
+      "type": "typesense",
+      "config": {
+        "host": "localhost",
+        "port": 8108,
+        "protocol": "http",
+        "api_key": "xyz"
+      }
+    }
+  ]
+}
