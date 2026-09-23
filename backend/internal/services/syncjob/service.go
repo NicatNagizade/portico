@@ -39,14 +39,21 @@ type RelationInput struct {
 	Active     *bool           `json:"active"`
 }
 
+type FieldValueInput struct {
+	ID               *int64 `json:"id"`
+	SourceValue      string `json:"source_value" binding:"required"`
+	DestinationValue string `json:"destination_value" binding:"required"`
+}
+
 type FieldInput struct {
-	ID                *int64          `json:"id"`
-	SyncJobRelationID *int64          `json:"sync_job_relation_id"`
-	SourceName        string          `json:"source_name" binding:"required"`
-	DestinationName   string          `json:"destination_name"`
-	DestinationType   string          `json:"destination_type"`
-	DestinationConfig json.RawMessage `json:"destination_config" swaggertype:"object"`
-	Active            *bool           `json:"active"`
+	ID                *int64            `json:"id"`
+	SyncJobRelationID *int64            `json:"sync_job_relation_id"`
+	SourceName        string            `json:"source_name" binding:"required"`
+	DestinationName   string            `json:"destination_name"`
+	DestinationType   string            `json:"destination_type"`
+	DestinationConfig json.RawMessage   `json:"destination_config" swaggertype:"object"`
+	Active            *bool             `json:"active"`
+	Values            []FieldValueInput `json:"values"`
 }
 
 type RuleInput struct {
@@ -108,7 +115,9 @@ func (s *Service) Get(id uint) (*models.SyncJob, error) {
 		Preload("DestinationConnection").
 		Preload("Relations").
 		Preload("Relations.Fields").
+		Preload("Relations.Fields.Values").
 		Preload("Fields", "sync_job_relation_id IS NULL").
+		Preload("Fields.Values").
 		Preload("Rules").
 		First(&item, id).Error
 	if err != nil {
@@ -495,6 +504,9 @@ func upsertFields(tx *gorm.DB, jobID uint, inputs []FieldInput, relationIDMap ma
 			}
 			keep[field.ID] = struct{}{}
 		}
+		if err := upsertFieldValues(tx, field.ID, in.Values); err != nil {
+			return err
+		}
 	}
 
 	for id := range existingByID {
@@ -502,6 +514,66 @@ func upsertFields(tx *gorm.DB, jobID uint, inputs []FieldInput, relationIDMap ma
 			continue
 		}
 		if err := tx.Delete(&models.SyncJobField{}, id).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func upsertFieldValues(tx *gorm.DB, fieldID uint, inputs []FieldValueInput) error {
+	var existing []models.SyncJobFieldValue
+	if err := tx.Where("sync_job_field_id = ?", fieldID).Find(&existing).Error; err != nil {
+		return err
+	}
+	existingByID := make(map[uint]models.SyncJobFieldValue, len(existing))
+	for _, v := range existing {
+		existingByID[v.ID] = v
+	}
+	keep := make(map[uint]struct{})
+	seenSource := make(map[string]struct{}, len(inputs))
+
+	for _, in := range inputs {
+		src := strings.TrimSpace(in.SourceValue)
+		if src == "" {
+			return fmt.Errorf("%w: field value source_value is required", ErrInvalid)
+		}
+		if _, dup := seenSource[src]; dup {
+			return fmt.Errorf("%w: duplicate field value source_value %q", ErrInvalid, src)
+		}
+		seenSource[src] = struct{}{}
+
+		row := models.SyncJobFieldValue{
+			SyncJobFieldID:   fieldID,
+			SourceValue:      src,
+			DestinationValue: in.DestinationValue,
+		}
+
+		clientKey := int64(0)
+		if in.ID != nil {
+			clientKey = *in.ID
+		}
+		if clientKey > 0 {
+			prev, ok := existingByID[uint(clientKey)]
+			if !ok {
+				return fmt.Errorf("%w: field value id %d not found", ErrInvalid, clientKey)
+			}
+			row.ID = prev.ID
+			if err := tx.Select("SourceValue", "DestinationValue").Save(&row).Error; err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Select("SyncJobFieldID", "SourceValue", "DestinationValue").Create(&row).Error; err != nil {
+				return err
+			}
+		}
+		keep[row.ID] = struct{}{}
+	}
+
+	for id := range existingByID {
+		if _, ok := keep[id]; ok {
+			continue
+		}
+		if err := tx.Delete(&models.SyncJobFieldValue{}, id).Error; err != nil {
 			return err
 		}
 	}

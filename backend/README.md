@@ -132,7 +132,6 @@ curl -X POST http://localhost:8080/sync-jobs \
     "destination_table": "applicants",
     "workers": 2,
     "config": {
-      "default_sorting_field": "id",
       "enable_nested_fields": true
     },
     "relations": [{
@@ -188,7 +187,6 @@ curl -X POST http://localhost:8080/sync-jobs \
     "destination_table": "users",
     "chunk_size": 100,
     "config": {
-      "default_sorting_field": "id",
       "enable_nested_fields": true
     },
     "relations": [
@@ -245,7 +243,7 @@ Optional per-field overrides live in `fields`. With no rows, columns pass throug
 
 Relations support the same `active` flag: `active: false` skips enrichment and omits that relation from the destination schema (root-level only; nested relations are not listed in the destination schema and rely on `enable_nested_fields`). Omit `active` (or set `true`) to keep the relation enabled.
 
-Optional sync-job `config` is opaque JSON interpreted by the destination connector. Omit it (or any key) to keep that connector's defaults. For Typesense: `default_sorting_field`, `enable_nested_fields` (default `true`), `symbols_to_index`, `token_separators`. Other connectors can define their own keys.
+Optional sync-job `config` is opaque JSON interpreted by the destination connector. Omit it (or any key) to keep that connector's defaults. For Typesense: `default_sorting_field` (int32/float/int64; `id` maps to sortable `id_int`), `enable_nested_fields` (default `true`), `symbols_to_index`, `token_separators`. Typesense document `id` is always a string; Portico also writes `id_int` (int64) for sorting. Other connectors can define their own keys.
 
 Omitting `foreign_key` / `related_key` defaults them to `{singular(parent_table)}_id` and `{singular(related_table)}_id` (e.g. `applicant_id`, `tag_id`). For nested `has_many`, the parent table is the parent relation’s `table`. All columns from the related table are included. After a `belongs_to_many` sync, each applicant document looks like:
 

@@ -43,7 +43,7 @@ func SchemaWithFields(base *connectors.TableSchema, fields []models.SyncJobField
 	return out
 }
 
-// ApplyFields renames, drops, or type-coerces document fields according to sync job field rules.
+// ApplyFields renames, drops, value-maps, or type-coerces document fields according to sync job field rules.
 func ApplyFields(docs []map[string]any, fields []models.SyncJobField) {
 	rules := fieldRulesBySource(fields)
 	if len(rules) == 0 {
@@ -59,6 +59,7 @@ func ApplyFields(docs []map[string]any, fields []models.SyncJobField) {
 			if !ok {
 				continue
 			}
+			val = mapFieldValue(val, rule.Values)
 			if rule.DestinationType != "" {
 				val = coerceValue(val, connectors.FieldType(rule.DestinationType))
 			}
@@ -69,6 +70,20 @@ func ApplyFields(docs []map[string]any, fields []models.SyncJobField) {
 			}
 		}
 	}
+}
+
+// mapFieldValue replaces val when a matching source_value mapping exists (compared as strings).
+func mapFieldValue(val any, mappings []models.SyncJobFieldValue) any {
+	if len(mappings) == 0 {
+		return val
+	}
+	key := fmt.Sprint(val)
+	for _, m := range mappings {
+		if m.SourceValue == key {
+			return m.DestinationValue
+		}
+	}
+	return val
 }
 
 func coerceValue(v any, t connectors.FieldType) any {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -368,8 +369,7 @@ func TestSyncJobsAndLogs(t *testing.T) {
 		"chunk_size":                100,
 		"workers":                   2,
 		"config": map[string]any{
-			"default_sorting_field": "id",
-			"enable_nested_fields":  true,
+			"enable_nested_fields": true,
 		},
 		"relations": []map[string]any{
 			{
@@ -401,6 +401,14 @@ func TestSyncJobsAndLogs(t *testing.T) {
 				"source_name":      "internal_notes",
 				"destination_name": "notes",
 				"active":           false,
+			},
+			{
+				"source_name":      "status",
+				"destination_type": "string",
+				"values": []map[string]any{
+					{"source_value": "1", "destination_value": "success"},
+					{"source_value": "2", "destination_value": "failed"},
+				},
 			},
 		},
 		"rules": []map[string]any{
@@ -439,8 +447,8 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if job.Relations[1].Name != "skills" || job.Relations[1].IsActive() {
 		t.Fatalf("expected inactive skills relation, got %+v", job.Relations[1])
 	}
-	if len(job.Fields) != 3 {
-		t.Fatalf("expected 3 fields, got %+v", job.Fields)
+	if len(job.Fields) != 4 {
+		t.Fatalf("expected 4 fields, got %+v", job.Fields)
 	}
 	if job.Fields[0].SourceName != "full_name" || job.Fields[0].DestinationName != "name" || !job.Fields[0].IsActive() {
 		t.Fatalf("unexpected first field: %+v", job.Fields[0])
@@ -450,6 +458,15 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 	if job.Fields[2].SourceName != "internal_notes" || job.Fields[2].IsActive() {
 		t.Fatalf("expected active=false field preserved, got %+v", job.Fields[2])
+	}
+	if job.Fields[3].SourceName != "status" || len(job.Fields[3].Values) != 2 {
+		t.Fatalf("expected status field with 2 value maps, got %+v", job.Fields[3])
+	}
+	if job.Fields[3].Values[0].SourceValue != "1" || job.Fields[3].Values[0].DestinationValue != "success" {
+		t.Fatalf("unexpected first value map: %+v", job.Fields[3].Values[0])
+	}
+	if job.Fields[3].Values[1].SourceValue != "2" || job.Fields[3].Values[1].DestinationValue != "failed" {
+		t.Fatalf("unexpected second value map: %+v", job.Fields[3].Values[1])
 	}
 	if len(job.Rules) != 2 {
 		t.Fatalf("expected 2 rules, got %+v", job.Rules)
@@ -464,8 +481,8 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if err := json.Unmarshal(job.Config, &jobCfg); err != nil {
 		t.Fatalf("decode job config: %v", err)
 	}
-	if jobCfg["default_sorting_field"] != "id" {
-		t.Fatalf("expected default_sorting_field=id, got %+v", jobCfg)
+	if jobCfg["enable_nested_fields"] != true {
+		t.Fatalf("expected enable_nested_fields=true, got %+v", jobCfg)
 	}
 
 	w = httptest.NewRecorder()
@@ -480,8 +497,11 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if len(job.Relations) != 2 {
 		t.Fatalf("expected preloaded relations, got %+v", job.Relations)
 	}
-	if len(job.Fields) != 3 {
+	if len(job.Fields) != 4 {
 		t.Fatalf("expected preloaded fields, got %+v", job.Fields)
+	}
+	if len(job.Fields[3].Values) != 2 {
+		t.Fatalf("expected preloaded field values, got %+v", job.Fields[3].Values)
 	}
 	if len(job.Rules) != 2 {
 		t.Fatalf("expected preloaded rules, got %+v", job.Rules)
@@ -896,7 +916,7 @@ func TestSyncRunWithMocks(t *testing.T) {
 		DestinationTable:        "applicants",
 		ChunkSize:               2,
 		Workers:                 2,
-		Config:                  datatypes.JSON([]byte(`{"default_sorting_field":"id","enable_nested_fields":false}`)),
+		Config:                  datatypes.JSON([]byte(`{"enable_nested_fields":false}`)),
 	}
 	if err := gdb.Create(&job).Error; err != nil {
 		t.Fatal(err)
@@ -957,11 +977,11 @@ func TestSyncRunWithMocks(t *testing.T) {
 	if err := json.Unmarshal(dst.config, &got); err != nil {
 		t.Fatalf("decode prepare config: %v", err)
 	}
-	if got["default_sorting_field"] != "id" {
-		t.Fatalf("expected default_sorting_field=id, got %+v", got)
-	}
 	if got["enable_nested_fields"] != false {
 		t.Fatalf("expected enable_nested_fields=false, got %+v", got["enable_nested_fields"])
+	}
+	if _, ok := got["default_sorting_field"]; ok {
+		t.Fatalf("expected no default_sorting_field, got %+v", got)
 	}
 	if len(dst.batches) == 0 {
 		t.Fatal("expected batches to be written")
@@ -2041,6 +2061,29 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 	}
 	if preview.Total != 2 || len(preview.Rows) != 2 {
 		t.Fatalf("expected 2 destination rows, got total=%d rows=%d", preview.Total, len(preview.Rows))
+	}
+	destCols := append([]string(nil), preview.Columns...)
+	wantDestCols := []string{"id", "full_name", "status"}
+	if !reflect.DeepEqual(destCols, wantDestCols) {
+		t.Fatalf("expected destination columns %v, got %v", wantDestCols, destCols)
+	}
+
+	destSortBody, _ := json.Marshal(map[string]any{
+		"side": "destination", "page": 1, "page_size": 10,
+		"sort_by": "full_name", "sort_dir": "desc",
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(destSortBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore destination sort status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(preview.Columns, destCols) {
+		t.Fatalf("destination column order changed after sort: before %v after %v", destCols, preview.Columns)
 	}
 
 	badBody, _ := json.Marshal(map[string]any{"side": "neither"})

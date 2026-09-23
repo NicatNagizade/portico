@@ -225,10 +225,12 @@ export default function ExplorePage() {
       const size = data?.page_size || PAGE_SIZE
       const rows = data?.rows || []
       const preferred = Array.isArray(data?.columns) ? data.columns : []
+      // Keep prior column order on re-query (sort/page) so headers don't jump.
+      const sticky = preview.hasRun ? preview.columns : []
       setPreview({
         page: data?.page ?? nextPage,
         rows,
-        columns: columnsFromRows(rows, preferred),
+        columns: columnsFromRows(rows, [...sticky, ...preferred]),
         sortBy: data?.sort_by || nextSortBy || '',
         sortDir: data?.sort_dir || nextSortDir || 'asc',
         total: data?.total ?? 0,

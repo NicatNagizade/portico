@@ -26,6 +26,7 @@ export function fieldsFromSourceColumns(columns = [], existing = []) {
         destination_name: prev?.destination_name || name,
         destination_type: type || prev?.destination_type || '',
         active: prev?.active !== false,
+        values: prev?.values || [],
       }
     })
     .filter(Boolean)

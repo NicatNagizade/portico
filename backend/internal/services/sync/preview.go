@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/portico/backend/internal/connectors"
@@ -78,7 +79,9 @@ func (o *Orchestrator) loadJob(jobID uint) (*models.SyncJob, error) {
 		Preload("DestinationConnection").
 		Preload("Relations").
 		Preload("Relations.Fields").
+		Preload("Relations.Fields.Values").
 		Preload("Fields", "sync_job_relation_id IS NULL").
+		Preload("Fields.Values").
 		Preload("Rules").
 		First(&job, jobID).Error
 	if err != nil {
@@ -202,7 +205,28 @@ func (o *Orchestrator) previewDestination(ctx context.Context, job *models.SyncJ
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	return rows, exploreColumns(nil, job, rows), total, nil
+	// Use source schema so column order matches sync (not random map key order from Typesense docs).
+	return rows, exploreColumns(o.sourceSchema(ctx, job), job, rows), total, nil
+}
+
+// sourceSchema introspects the job's source table. Best-effort — nil on failure.
+func (o *Orchestrator) sourceSchema(ctx context.Context, job *models.SyncJob) *connectors.TableSchema {
+	if job == nil || job.SourceConnection == nil {
+		return nil
+	}
+	src, err := o.registry.NewSource(job.SourceConnection)
+	if err != nil {
+		return nil
+	}
+	if err := src.Open(ctx); err != nil {
+		return nil
+	}
+	defer src.Close()
+	schema, err := src.Schema(ctx, job.SourceTable)
+	if err != nil {
+		return nil
+	}
+	return schema
 }
 
 // ExportCSV writes matching explore rows as CSV, reading in chunks so large tables work.
@@ -308,11 +332,22 @@ func exploreColumns(schema *connectors.TableSchema, job *models.SyncJob, rows []
 			}
 		}
 	}
+	// Map key iteration order is random — collect leftovers then sort for stable UI columns.
+	var extra []string
 	for _, row := range rows {
 		for k := range row {
-			add(k)
+			if k == "" {
+				continue
+			}
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			extra = append(extra, k)
 		}
 	}
+	sort.Strings(extra)
+	cols = append(cols, extra...)
 	return cols
 }
 

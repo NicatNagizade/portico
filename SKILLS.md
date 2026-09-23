@@ -40,6 +40,7 @@ Future pairs (MySQL→MySQL, MySQL→MongoDB) should land the same way — new c
 
 - No field rows → pass through all source columns.
 - `active=false` on a field or relation → skip it on import.
+- Field `values` (`sync_job_fields_values`): optional source→destination cell mappings (e.g. status `1` → `success`). Compared as strings; unmatched values pass through. Applied before destination type coercion.
 - Rules filter source rows before Count/Read (AND). Example: `field=client_id`, `operator=eq`, `value=123`.
 - Operators: `eq` / `neq` / `gt` / `gte` / `lt` / `lte` / `in` / `not_in` / `like` / `is_null` / `is_not_null`.
 - `in` / `not_in` values are comma-separated. `is_null` / `is_not_null` ignore value.

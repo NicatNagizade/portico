@@ -33,6 +33,14 @@ function buildInitialConfig(config) {
   }
 }
 
+function mapFieldValue(v) {
+  return {
+    id: v.id,
+    source_value: v.source_value || '',
+    destination_value: v.destination_value || '',
+  }
+}
+
 function mapField(f) {
   return {
     id: f.id,
@@ -40,7 +48,18 @@ function mapField(f) {
     destination_name: f.destination_name || '',
     destination_type: f.destination_type || '',
     active: f.active !== false,
+    values: (f.values || []).map(mapFieldValue),
   }
+}
+
+function fieldValuesPayload(values = []) {
+  return values
+    .filter((v) => String(v.source_value ?? '').trim() && String(v.destination_value ?? '').trim())
+    .map((v) => ({
+      id: v.id && v.id > 0 ? v.id : undefined,
+      source_value: String(v.source_value).trim(),
+      destination_value: String(v.destination_value).trim(),
+    }))
 }
 
 function mapRule(r) {
@@ -165,6 +184,7 @@ export default function SyncJobForm({
           destination_name: f.destination_name?.trim() || undefined,
           destination_type: f.destination_type || undefined,
           active: f.active !== false,
+          values: fieldValuesPayload(f.values),
         })),
       ...keptRelations.flatMap((r) =>
         (r.fields || [])
@@ -176,6 +196,7 @@ export default function SyncJobForm({
             destination_name: f.destination_name?.trim() || undefined,
             destination_type: f.destination_type || undefined,
             active: f.active !== false,
+            values: fieldValuesPayload(f.values),
           })),
       ),
     ]
@@ -318,7 +339,10 @@ export default function SyncJobForm({
             </span>
           </summary>
           <div className="grid gap-4 border-t border-[var(--border)] px-4 pt-4 sm:grid-cols-2">
-            <Field label="Default sorting field">
+            <Field
+              label="Default sorting field"
+              hint="int32/float/int64 — id uses id_int"
+            >
               <AutocompleteInput
                 options={sourceColumnNames}
                 value={config.default_sorting_field}

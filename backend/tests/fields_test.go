@@ -90,6 +90,35 @@ func TestApplyFieldsCoerceDestinationType(t *testing.T) {
 	}
 }
 
+func TestApplyFieldsValueMaps(t *testing.T) {
+	docs := []map[string]any{
+		{"id": "1", "status": 1},
+		{"id": "2", "status": int64(2)},
+		{"id": "3", "status": 9},
+	}
+	fields := []models.SyncJobField{
+		{
+			SourceName:      "status",
+			DestinationType: string(connectors.FieldTypeString),
+			Active:          boolPtr(true),
+			Values: []models.SyncJobFieldValue{
+				{SourceValue: "1", DestinationValue: "success"},
+				{SourceValue: "2", DestinationValue: "failed"},
+			},
+		},
+	}
+	syncsvc.ApplyFields(docs, fields)
+
+	want := []map[string]any{
+		{"id": "1", "status": "success"},
+		{"id": "2", "status": "failed"},
+		{"id": "3", "status": "9"},
+	}
+	if !reflect.DeepEqual(docs, want) {
+		t.Fatalf("ApplyFields value maps mismatch\ngot  %+v\nwant %+v", docs, want)
+	}
+}
+
 func TestApplyFieldsNoop(t *testing.T) {
 	docs := []map[string]any{{"id": "1", "name": "Ada"}}
 	syncsvc.ApplyFields(docs, nil)

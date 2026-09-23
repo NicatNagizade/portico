@@ -169,7 +169,9 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 		Preload("DestinationConnection").
 		Preload("Relations").
 		Preload("Relations.Fields").
+		Preload("Relations.Fields.Values").
 		Preload("Fields", "sync_job_relation_id IS NULL").
+		Preload("Fields.Values").
 		Preload("Rules").
 		First(&job, jobID).Error; err != nil {
 		return 0, 0, fmt.Errorf("load sync job: %w", err)

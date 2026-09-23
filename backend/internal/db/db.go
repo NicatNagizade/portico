@@ -50,6 +50,7 @@ func migrate(gdb *gorm.DB) error {
 		&models.SyncJob{},
 		&models.SyncJobRelation{},
 		&models.SyncJobField{},
+		&models.SyncJobFieldValue{},
 		&models.SyncJobRule{},
 		&models.SyncLog{},
 	); err != nil {
@@ -63,6 +64,7 @@ func Refresh(gdb *gorm.DB) error {
 	if err := gdb.Migrator().DropTable(
 		&models.SyncLog{},
 		&models.SyncJobRule{},
+		&models.SyncJobFieldValue{},
 		&models.SyncJobField{},
 		&models.SyncJobRelation{},
 		&models.SyncJob{},

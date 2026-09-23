@@ -1232,6 +1232,35 @@
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncJobFieldValue"
+                    }
+                }
+            }
+        },
+        "models.SyncJobFieldValue": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "destination_value": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "source_value": {
+                    "type": "string"
+                },
+                "sync_job_field_id": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -1462,6 +1491,30 @@
                 },
                 "sync_job_relation_id": {
                     "type": "integer"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.FieldValueInput"
+                    }
+                }
+            }
+        },
+        "syncjob.FieldValueInput": {
+            "type": "object",
+            "required": [
+                "destination_value",
+                "source_value"
+            ],
+            "properties": {
+                "destination_value": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "source_value": {
+                    "type": "string"
                 }
             }
         },

@@ -327,20 +327,34 @@ export default function SyncJobDetailPage() {
           ) : (
             <ul className="divide-y divide-[var(--border)]">
               {job.fields.map((field) => (
-                <li key={field.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
-                  <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-                    <span className="rounded-md bg-[var(--bg-elevated)] px-2 py-1">{field.source_name}</span>
-                    {field.destination_name ? (
-                      <>
-                        <span className="text-[var(--text-muted)]">→</span>
-                        <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[var(--accent-ink)]">
-                          {field.destination_name}
-                        </span>
-                      </>
-                    ) : null}
-                    {field.destination_type ? <MetaChip>{field.destination_type}</MetaChip> : null}
+                <li key={field.id} className="space-y-2 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+                      <span className="rounded-md bg-[var(--bg-elevated)] px-2 py-1">{field.source_name}</span>
+                      {field.destination_name ? (
+                        <>
+                          <span className="text-[var(--text-muted)]">→</span>
+                          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[var(--accent-ink)]">
+                            {field.destination_name}
+                          </span>
+                        </>
+                      ) : null}
+                      {field.destination_type ? <MetaChip>{field.destination_type}</MetaChip> : null}
+                    </div>
+                    <MetaChip>{field.active === false ? 'inactive' : 'active'}</MetaChip>
                   </div>
-                  <MetaChip>{field.active === false ? 'inactive' : 'active'}</MetaChip>
+                  {(field.values || []).length > 0 ? (
+                    <ul className="flex flex-wrap gap-1.5 pl-1 font-mono text-[11px] text-[var(--text-muted)]">
+                      {field.values.map((v) => (
+                        <li
+                          key={v.id}
+                          className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)]/70 px-2 py-0.5"
+                        >
+                          {v.source_value} → {v.destination_value}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -382,6 +396,9 @@ export default function SyncJobDetailPage() {
                             {field.source_name}
                             {field.destination_name ? ` → ${field.destination_name}` : ''}
                             {field.destination_type ? ` (${field.destination_type})` : ''}
+                            {(field.values || []).length > 0
+                              ? ` · ${field.values.length} value map(s)`
+                              : ''}
                           </li>
                         ))}
                       </ul>
