@@ -10,6 +10,7 @@ import (
 	"github.com/portico/backend/internal/db"
 	"github.com/portico/backend/internal/secretbox"
 	"github.com/portico/backend/internal/services/connection"
+	"github.com/portico/backend/internal/services/syncjob"
 )
 
 func main() {
@@ -29,12 +30,20 @@ func main() {
 		path = "connections.json"
 	}
 
-	results, err := bootstrap.ImportConnections(connection.NewService(gdb), path)
+	out, err := bootstrap.ImportConnections(
+		connection.NewService(gdb),
+		syncjob.NewService(gdb),
+		path,
+	)
 	if err != nil {
 		log.Fatalf("import: %v", err)
 	}
-	for _, r := range results {
-		fmt.Printf("%s %s (%s) id=%d\n", r.Action, r.Name, r.Type, r.ID)
+	for _, r := range out.Connections {
+		fmt.Printf("%s connection %s (%s) id=%d\n", r.Action, r.Name, r.Type, r.ID)
 	}
-	fmt.Printf("imported %d connection(s) from %s\n", len(results), path)
+	for _, r := range out.SyncJobs {
+		fmt.Printf("%s sync_job %s id=%d\n", r.Action, r.Name, r.ID)
+	}
+	fmt.Printf("imported %d connection(s), %d sync job(s) from %s\n",
+		len(out.Connections), len(out.SyncJobs), path)
 }

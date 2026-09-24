@@ -2,6 +2,7 @@ package register
 
 import (
 	"github.com/portico/backend/internal/connectors"
+	mongoconn "github.com/portico/backend/internal/connectors/mongodb"
 	mysqlconn "github.com/portico/backend/internal/connectors/mysql"
 	pgconn "github.com/portico/backend/internal/connectors/postgres"
 	tsconn "github.com/portico/backend/internal/connectors/typesense"
@@ -14,7 +15,8 @@ func DefaultRegistry() *connectors.Registry {
 	r.RegisterSource(models.ConnectionTypeMySQL, mysqlconn.NewSource)
 	r.RegisterSource(models.ConnectionTypePostgres, pgconn.NewSource)
 	r.RegisterDestination(models.ConnectionTypeTypesense, tsconn.NewDestination)
-	// Future: RegisterDestination(models.ConnectionTypeMySQL, ...),
-	// Future: RegisterDestination(models.ConnectionTypeMongoDB, ...),
+	r.RegisterDestination(models.ConnectionTypeMongoDB, mongoconn.NewDestination)
+	r.RegisterDestination(models.ConnectionTypeMySQL, mysqlconn.NewDestination)
+	r.RegisterDestination(models.ConnectionTypePostgres, pgconn.NewDestination)
 	return r
 }

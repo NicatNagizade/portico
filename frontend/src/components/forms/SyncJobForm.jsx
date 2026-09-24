@@ -121,7 +121,14 @@ export default function SyncJobForm({
     [connections],
   )
   const destinationConnections = useMemo(
-    () => connections.filter((c) => c.type === 'typesense'),
+    () =>
+      connections.filter(
+        (c) =>
+          c.type === 'typesense' ||
+          c.type === 'mongodb' ||
+          c.type === 'mysql' ||
+          c.type === 'postgres',
+      ),
     [connections],
   )
 

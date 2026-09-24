@@ -1,6 +1,6 @@
 # Portico
 
-Sync API + admin UI. Sources (MySQL / Postgres today) → destinations (Typesense today). Structure is ready for more pairs (e.g. MySQL → MySQL, MySQL → MongoDB) without rewriting the orchestrator.
+Sync API + admin UI. Sources (MySQL / Postgres) → destinations (Typesense / MongoDB / MySQL / Postgres). Structure is ready for more pairs without rewriting the orchestrator.
 
 ## Layout
 
@@ -28,7 +28,7 @@ make import-connections                 # upsert from backend/connections.json (
 make example-migrate && make example-seed
 ```
 
-No Docker in the default workflow — run locally with `go run` / Vite. App DB is created on migrate if missing (`DB_*` vars, never `DATABASE_URL`). Copy `backend/connections.json.example` → `backend/connections.json` (gitignored) to bootstrap connector credentials into the DB; optional `CONNECTIONS_FILE` overrides the path.
+No Docker in the default workflow — run locally with `go run` / Vite. App DB is created on migrate if missing (`DB_*` vars, never `DATABASE_URL`). Copy `backend/connections.json.example` → `backend/connections.json` (gitignored) to bootstrap connector credentials and optional sync jobs (fields/rules/relations) into the DB; optional `CONNECTIONS_FILE` overrides the path.
 
 ## Working style (non-negotiable)
 
@@ -78,7 +78,7 @@ These come from how this project is built day to day. Prefer them over “clever
 
 ## Domain model
 
-- **Connections** — `mysql` | `postgres` | `typesense` (| `mongodb` reserved). Config JSON sealed at rest.
+- **Connections** — `mysql` | `postgres` | `typesense` | `mongodb`. Config JSON sealed at rest.
 - **Sync jobs** — `source_connection_id` → `source_table` → `destination_connection_id` → `destination_table`, plus `chunk_size`, `workers`, opaque `config`.
 - **Fields** — optional overrides (rename / type / exclude / value maps). Omit all → pass through every source column. `active=false` → exclude from import. Coerce values to the declared destination type before write (e.g. object → string when type is string). Nullable `sync_job_relation_id` scopes a field to a relation’s related rows; omit for root/source fields. Optional `values` (`sync_job_fields_values`) map source cell values to destination values (e.g. `1` → `success`); unmatched values pass through.
 - **Rules** — optional source filters (`field` + `operator` + `value`) AND’d before Count/Read. Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `like`, `is_null`, `is_not_null`. `active=false` skips the rule. Applied at the source SQL layer (not post-fetch).

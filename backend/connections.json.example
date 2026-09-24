@@ -21,6 +21,72 @@
         "protocol": "http",
         "api_key": "xyz"
       }
+    },
+    {
+      "name": "local-mongo",
+      "type": "mongodb",
+      "config": {
+        "host": "127.0.0.1",
+        "port": 27017,
+        "user": "user",
+        "password": "password",
+        "database": "portico_test",
+        "auth_source": "admin"
+      }
+    }
+  ],
+  "sync_jobs": [
+    {
+      "name": "users-to-typesense",
+      "source_connection": "local-postgres",
+      "source_table": "users",
+      "destination_connection": "local-typesense",
+      "destination_table": "users",
+      "chunk_size": 500,
+      "workers": 2,
+      "config": {
+        "enable_nested_fields": true
+      },
+      "relations": [
+        {
+          "id": -1,
+          "name": "posts",
+          "type": "has_many",
+          "table": "posts",
+          "foreign_key": "user_id",
+          "related_key": "id"
+        }
+      ],
+      "fields": [
+        {
+          "source_name": "id",
+          "destination_name": "id",
+          "destination_type": "int64"
+        },
+        {
+          "source_name": "username",
+          "destination_name": "username",
+          "destination_type": "string"
+        },
+        {
+          "sync_job_relation_id": -1,
+          "source_name": "title",
+          "destination_name": "title",
+          "destination_type": "string"
+        },
+        {
+          "source_name": "status",
+          "destination_name": "status",
+          "destination_type": "string",
+          "values": [
+            { "source_value": "1", "destination_value": "success" },
+            { "source_value": "2", "destination_value": "failed" }
+          ]
+        }
+      ],
+      "rules": [
+        { "field": "id", "operator": "gt", "value": "0" }
+      ]
     }
   ]
 }

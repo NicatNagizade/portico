@@ -29,6 +29,15 @@ const TYPESENSE_FIELDS = [
   { key: 'protocol', label: 'Protocol', type: 'text', required: true, defaultValue: 'http' },
 ]
 
+const MONGODB_FIELDS = [
+  { key: 'host', label: 'Host', type: 'text', required: true, defaultValue: '127.0.0.1' },
+  { key: 'port', label: 'Port', type: 'number', required: true, defaultValue: 27017 },
+  { key: 'user', label: 'User', type: 'text', required: false, defaultValue: '' },
+  { key: 'password', label: 'Password', type: 'password', required: false, defaultValue: '' },
+  { key: 'database', label: 'Database', type: 'text', required: true, defaultValue: '' },
+  { key: 'auth_source', label: 'Auth source', type: 'text', required: false, defaultValue: 'admin' },
+]
+
 export function getConfigFields(type) {
   switch (type) {
     case 'mysql':
@@ -37,6 +46,8 @@ export function getConfigFields(type) {
       return POSTGRES_FIELDS
     case 'typesense':
       return TYPESENSE_FIELDS
+    case 'mongodb':
+      return MONGODB_FIELDS
     default:
       return null
   }

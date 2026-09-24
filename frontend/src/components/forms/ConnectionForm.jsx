@@ -130,7 +130,7 @@ export default function ConnectionForm({ initial, onSubmit, busy, submitLabel })
           </div>
         </div>
         {useRawJson ? (
-          <Field label="JSON config" hint="Used for types without a typed form (e.g. MongoDB).">
+          <Field label="JSON config" hint="Used for connection types without a typed form.">
             <textarea
               className={`${inputClassName} min-h-40 font-mono text-xs`}
               value={rawJson}

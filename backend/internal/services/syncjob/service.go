@@ -129,6 +129,23 @@ func (s *Service) Get(id uint) (*models.SyncJob, error) {
 	return &item, nil
 }
 
+// FindByName returns the single sync job with the given name.
+// ErrNotFound if none; ErrInvalid if more than one.
+func (s *Service) FindByName(name string) (*models.SyncJob, error) {
+	var items []models.SyncJob
+	if err := s.db.Where("name = ?", name).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	switch len(items) {
+	case 0:
+		return nil, ErrNotFound
+	case 1:
+		return s.Get(items[0].ID)
+	default:
+		return nil, fmt.Errorf("%w: multiple sync jobs named %q", ErrInvalid, name)
+	}
+}
+
 func (s *Service) Create(in CreateInput) (*models.SyncJob, error) {
 	chunk := in.ChunkSize
 	if chunk <= 0 {

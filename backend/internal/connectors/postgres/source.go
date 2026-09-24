@@ -9,7 +9,6 @@ import (
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/connectors/sqlutil"
 	"github.com/portico/backend/internal/models"
-	postgresDriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -29,26 +28,15 @@ type Source struct {
 }
 
 func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
-	var cfg Config
-	if err := json.Unmarshal(conn.Config, &cfg); err != nil {
-		return nil, fmt.Errorf("parse postgres config: %w", err)
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 5432
-	}
-	if cfg.SSLMode == "" {
-		cfg.SSLMode = "disable"
-	}
-	if cfg.Schema == "" {
-		cfg.Schema = "public"
+	cfg, err := ParseConfig(json.RawMessage(conn.Config))
+	if err != nil {
+		return nil, err
 	}
 	return &Source{cfg: cfg}, nil
 }
 
 func (s *Source) Open(ctx context.Context) error {
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		s.cfg.Host, s.cfg.Port, s.cfg.User, s.cfg.Password, s.cfg.Database, s.cfg.SSLMode)
-	db, err := sqlutil.Open(ctx, postgresDriver.Open(dsn))
+	db, err := openDB(ctx, s.cfg)
 	if err != nil {
 		return err
 	}

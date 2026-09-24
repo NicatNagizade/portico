@@ -47,7 +47,7 @@ lint: ## Lint frontend
 migrate-refresh: ## DESTRUCTIVE: drop all app tables and re-run AutoMigrate
 	cd $(BACKEND) && go run ./cmd/migrate refresh
 
-import-connections: ## Upsert connections from backend/connections.json into the DB
+import-connections: ## Upsert connections + sync jobs from backend/connections.json
 	cd $(BACKEND) && go run ./cmd/import-connections
 
 example-migrate: ## Create example Postgres DB + tables

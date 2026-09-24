@@ -61,6 +61,23 @@ func (s *Service) Get(id uint) (*models.Connection, error) {
 	return &item, nil
 }
 
+// FindByName returns the single connection with the given name.
+// ErrNotFound if none; ErrAmbiguous if more than one.
+func (s *Service) FindByName(name string) (*models.Connection, error) {
+	var items []models.Connection
+	if err := s.db.Where("name = ?", name).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	switch len(items) {
+	case 0:
+		return nil, ErrNotFound
+	case 1:
+		return &items[0], nil
+	default:
+		return nil, ErrAmbiguous
+	}
+}
+
 // FindByNameAndType returns the single connection with the given name and type.
 // ErrNotFound if none; ErrAmbiguous if more than one.
 func (s *Service) FindByNameAndType(name, typ string) (*models.Connection, error) {

@@ -9,7 +9,6 @@ import (
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/connectors/sqlutil"
 	"github.com/portico/backend/internal/models"
-	mysqlDriver "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -27,20 +26,15 @@ type Source struct {
 }
 
 func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
-	var cfg Config
-	if err := json.Unmarshal(conn.Config, &cfg); err != nil {
-		return nil, fmt.Errorf("parse mysql config: %w", err)
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 3306
+	cfg, err := ParseConfig(json.RawMessage(conn.Config))
+	if err != nil {
+		return nil, err
 	}
 	return &Source{cfg: cfg}, nil
 }
 
 func (s *Source) Open(ctx context.Context) error {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4",
-		s.cfg.User, s.cfg.Password, s.cfg.Host, s.cfg.Port, s.cfg.Database)
-	db, err := sqlutil.Open(ctx, mysqlDriver.Open(dsn))
+	db, err := openDB(ctx, s.cfg)
 	if err != nil {
 		return err
 	}

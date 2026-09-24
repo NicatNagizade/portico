@@ -30,7 +30,7 @@ Task playbooks for common work on this repo. Read `AGENTS.md` for project rules;
 6. Coerce field values to the declared destination type before write (e.g. stringify when type is string).
 7. Update swagger comments + `make swagger` if HTTP surface changes; add/adjust tests under `backend/tests`.
 
-Future pairs (MySQL→MySQL, MySQL→MongoDB) should land the same way — new connector package + registry entry.
+New connectors land the same way — package under `connectors/<name>/` + registry entry.
 
 ---
 
