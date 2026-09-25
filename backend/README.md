@@ -1,6 +1,6 @@
 # Portico Sync API
 
-Go API for connections and sync jobs (MySQL/Postgres → Typesense/MongoDB/MySQL/Postgres), Gin + GORM.
+Go API for connections and sync jobs (MySQL / Postgres / SQLite / Typesense / MongoDB / Redis as source or destination), Gin + GORM.
 
 ## Setup
 

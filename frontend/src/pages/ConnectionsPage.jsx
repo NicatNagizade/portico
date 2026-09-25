@@ -61,7 +61,7 @@ export default function ConnectionsPage() {
       <PageHeader
         eyebrow="Data plane"
         title="Connections"
-        description="Wire up MySQL or Postgres sources and Typesense, MongoDB, MySQL, or Postgres destinations Portico will sync between."
+        description="Connect MySQL, Postgres, SQLite, Typesense, MongoDB, or Redis. Every connection can be used as a source or a destination."
         actions={
           <Link to="/connections/new">
             <PrimaryButton>
@@ -78,7 +78,7 @@ export default function ConnectionsPage() {
       ) : items.length === 0 ? (
         <EmptyState
           title="No connections yet"
-          message="Create a source (MySQL/Postgres) and a destination (Typesense/MongoDB/MySQL/Postgres) to start syncing tables."
+          message="Create a connection, then use it as a source or destination in a sync job."
           action={
             <Link to="/connections/new">
               <PrimaryButton>Create first connection</PrimaryButton>

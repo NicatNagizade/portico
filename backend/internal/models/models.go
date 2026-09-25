@@ -15,6 +15,8 @@ const (
 	ConnectionTypePostgres  = "postgres"
 	ConnectionTypeTypesense = "typesense"
 	ConnectionTypeMongoDB   = "mongodb"
+	ConnectionTypeSQLite    = "sqlite"
+	ConnectionTypeRedis     = "redis"
 
 	SyncLogStatusRunning = "running"
 	SyncLogStatusSuccess = "success"

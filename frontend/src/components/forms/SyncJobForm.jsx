@@ -169,21 +169,8 @@ export default function SyncJobForm({
   const { tables, columnsByTable, ensureTables, ensureColumns } =
     useConnectionSchema(sourceConnectionId)
 
-  const sourceConnections = useMemo(
-    () => connections.filter((c) => c.type === 'mysql' || c.type === 'postgres'),
-    [connections],
-  )
-  const destinationConnections = useMemo(
-    () =>
-      connections.filter(
-        (c) =>
-          c.type === 'typesense' ||
-          c.type === 'mongodb' ||
-          c.type === 'mysql' ||
-          c.type === 'postgres',
-      ),
-    [connections],
-  )
+  const sourceConnections = connections
+  const destinationConnections = connections
 
   const destinationType = useMemo(() => {
     const selected = connections.find((c) => String(c.id) === String(destinationConnectionId))

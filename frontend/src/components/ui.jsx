@@ -209,8 +209,10 @@ export function TypeChip({ type }) {
   const styles = {
     mysql: { bg: 'var(--mysql-soft)', color: 'var(--mysql)' },
     postgres: { bg: 'var(--postgres-soft)', color: 'var(--postgres)' },
+    sqlite: { bg: 'var(--sqlite-soft)', color: 'var(--sqlite)' },
     typesense: { bg: 'var(--typesense-soft)', color: 'var(--typesense)' },
     mongodb: { bg: 'var(--mongodb-soft)', color: 'var(--mongodb)' },
+    redis: { bg: 'var(--redis-soft)', color: 'var(--redis)' },
   }
   const style = styles[type] || {
     bg: 'var(--accent-soft)',

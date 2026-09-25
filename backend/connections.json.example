@@ -33,6 +33,23 @@
         "database": "portico_test",
         "auth_source": "admin"
       }
+    },
+    {
+      "name": "local-sqlite",
+      "type": "sqlite",
+      "config": {
+        "path": "./example.db"
+      }
+    },
+    {
+      "name": "local-redis",
+      "type": "redis",
+      "config": {
+        "host": "127.0.0.1",
+        "port": 6379,
+        "password": "",
+        "db": 0
+      }
     }
   ],
   "sync_jobs": [

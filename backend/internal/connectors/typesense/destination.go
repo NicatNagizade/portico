@@ -42,15 +42,9 @@ type Destination struct {
 }
 
 func NewDestination(conn *models.Connection) (connectors.DestinationWriter, error) {
-	var cfg Config
-	if err := json.Unmarshal(conn.Config, &cfg); err != nil {
-		return nil, fmt.Errorf("parse typesense config: %w", err)
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 8108
-	}
-	if cfg.Protocol == "" {
-		cfg.Protocol = "http"
+	cfg, err := ParseConfig(json.RawMessage(conn.Config))
+	if err != nil {
+		return nil, err
 	}
 	return &Destination{cfg: cfg}, nil
 }

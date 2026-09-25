@@ -23,14 +23,14 @@ Task playbooks for common work on this repo. Read `AGENTS.md` for project rules;
 **When:** new source/destination, or changing ListTables / Schema / Read / Write behavior.
 
 1. Implement under `backend/internal/connectors/<name>/`.
-2. Satisfy `SourceReader` and/or `DestinationWriter` in `connectors/connectors.go`.
-3. Register in `register.DefaultRegistry()`.
+2. Satisfy `SourceReader` and `DestinationWriter` in `connectors/connectors.go` (prefer both so the type is bidirectional). Implement `DestinationReader.Query` on the destination for explore.
+3. Register source and destination in `register.DefaultRegistry()`.
 4. Do **not** edit `services/sync` orchestrator for a new type — the registry is the extension point.
 5. Destination `Prepare`/`WriteBatch`: treat sync job `config` as opaque JSON; apply defaults when keys are missing.
 6. Coerce field values to the declared destination type before write (e.g. stringify when type is string).
 7. Update swagger comments + `make swagger` if HTTP surface changes; add/adjust tests under `backend/tests`.
 
-New connectors land the same way — package under `connectors/<name>/` + registry entry.
+New connectors land the same way — package under `connectors/<name>/` + registry entries for source and destination. Document stores can reuse `connectors/docutil` for in-memory filters.
 
 ---
 

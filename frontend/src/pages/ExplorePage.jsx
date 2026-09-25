@@ -15,7 +15,6 @@ import {
   MetaChip,
   PageHeader,
   Pagination,
-  Panel,
   PrimaryButton,
   SecondaryButton,
   TableShell,
@@ -113,6 +112,55 @@ function DownloadIcon() {
         strokeLinejoin="round"
       />
     </svg>
+  )
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M14 4h6v6M20 4l-9 9M10 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function SideToggle({ value, onChange, disabled }) {
+  return (
+    <div
+      role="group"
+      aria-label="Connection side"
+      className="inline-flex w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-1 shadow-[var(--shadow-sm)]"
+    >
+      {[
+        { value: 'source', label: 'Source' },
+        { value: 'destination', label: 'Destination' },
+      ].map((option) => {
+        const active = value === option.value
+        return (
+          <button
+            key={option.value}
+            type="button"
+            disabled={disabled}
+            aria-pressed={active}
+            onClick={() => onChange(option.value)}
+            className={[
+              'flex-1 rounded-md px-3 py-2 text-sm font-medium transition-all',
+              active
+                ? 'bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-sm)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text)]',
+              disabled ? 'opacity-50' : '',
+            ].join(' ')}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -257,6 +305,13 @@ export default function ExplorePage() {
     }
   }
 
+  function changeSide(next) {
+    if (next === side) return
+    setSide(next)
+    setPreview(resetPreviewState())
+    setSelectedRow(null)
+  }
+
   function toggleSort(col) {
     let nextBy = col
     let nextDir = 'asc'
@@ -300,77 +355,58 @@ export default function ExplorePage() {
         />
       ) : (
         <div className="space-y-5">
-          <Panel
-            className="animate-fade-up"
-            title="Query"
-            description="Choose a job and which side to inspect."
-            actions={
-              <div className="flex flex-wrap gap-2">
-                <PrimaryButton type="button" disabled={!jobId || busy} onClick={() => runQuery(1)}>
+          <form
+            className="animate-fade-up rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]"
+            onSubmit={(e) => {
+              e.preventDefault()
+              runQuery(1)
+            }}
+          >
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
+              <div className="min-w-0 flex-1">
+                <Field label="Sync job">
+                  <select
+                    className={inputClassName}
+                    value={jobId}
+                    onChange={(e) => setJobId(e.target.value)}
+                  >
+                    <option value="">Select a sync job…</option>
+                    {jobs.map((j) => (
+                      <option key={j.id} value={String(j.id)}>
+                        {j.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+
+              <div className="w-full lg:w-64">
+                <span className="mb-1.5 block text-[13px] font-medium text-[var(--text)]">
+                  Side
+                </span>
+                <SideToggle value={side} onChange={changeSide} disabled={!jobId} />
+              </div>
+
+              <div className="flex shrink-0 flex-wrap gap-2 lg:pb-0.5">
+                <PrimaryButton type="submit" disabled={!jobId || busy}>
                   <PreviewIcon />
-                  {queryLoading ? 'Loading…' : 'Preview rows'}
+                  {queryLoading ? 'Loading…' : 'Preview'}
                 </PrimaryButton>
-                <SecondaryButton type="button" disabled={!jobId || busy} onClick={handleExport}>
+                <SecondaryButton
+                  type="button"
+                  disabled={!jobId || busy}
+                  onClick={handleExport}
+                >
                   <DownloadIcon />
                   {exporting ? 'Downloading…' : 'Download CSV'}
                 </SecondaryButton>
               </div>
-            }
-          >
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-              <Field label="Sync job">
-                <select
-                  className={inputClassName}
-                  value={jobId}
-                  onChange={(e) => setJobId(e.target.value)}
-                >
-                  <option value="">Select a sync job…</option>
-                  {jobs.map((j) => (
-                    <option key={j.id} value={String(j.id)}>
-                      {j.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <div>
-                <span className="mb-1.5 block text-[13px] font-medium text-[var(--text)]">
-                  Connection side
-                </span>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { value: 'source', label: 'Source' },
-                    { value: 'destination', label: 'Destination' },
-                  ].map((option) => {
-                    const active = side === option.value
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        disabled={!jobId}
-                        onClick={() => {
-                          setSide(option.value)
-                          setPreview(resetPreviewState())
-                          setSelectedRow(null)
-                        }}
-                        className={[
-                          'rounded-lg border px-3 py-2.5 text-sm font-medium transition-all',
-                          active
-                            ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-[var(--shadow-sm)]'
-                            : 'border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]',
-                          !jobId ? 'opacity-50' : '',
-                        ].join(' ')}
-                      >
-                        {option.label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
             </div>
 
             {jobLoading ? (
-              <p className="mt-4 text-sm text-[var(--text-muted)]">Loading job details…</p>
+              <p className="mt-4 border-t border-[var(--border)] pt-4 text-sm text-[var(--text-muted)]">
+                Loading job details…
+              </p>
             ) : job ? (
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-4">
                 <MetaChip>
@@ -387,18 +423,19 @@ export default function ExplorePage() {
                 </MetaChip>
                 <MetaChip>
                   {side === 'source'
-                    ? 'Filters, relations & field mapping'
+                    ? 'Mapped source rows'
                     : 'Stored destination documents'}
                 </MetaChip>
                 <Link
                   to={`/sync-jobs/${job.id}`}
-                  className="ml-auto text-sm font-medium text-[var(--accent)] hover:underline"
+                  className="ml-auto inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent)] hover:underline"
                 >
                   Open job
+                  <ExternalLinkIcon />
                 </Link>
               </div>
             ) : null}
-          </Panel>
+          </form>
 
           {!jobId ? (
             <EmptyState
@@ -409,12 +446,6 @@ export default function ExplorePage() {
             <EmptyState
               title="Ready to preview"
               message={`Load ${side} rows for “${job?.name || 'this job'}” to inspect the mapped result set.`}
-              action={
-                <PrimaryButton type="button" disabled={busy} onClick={() => runQuery(1)}>
-                  <PreviewIcon />
-                  Preview rows
-                </PrimaryButton>
-              }
             />
           ) : null}
 
@@ -426,21 +457,17 @@ export default function ExplorePage() {
 
           {hasRun && rows.length > 0 ? (
             <div className="space-y-3">
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-semibold tracking-tight text-[var(--text)]">
-                    Preview
-                  </h3>
-                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                    {total.toLocaleString()} row{total === 1 ? '' : 's'} from {side}
-                    {columns.length ? ` · ${columns.length} columns` : ''}
-                    {sortBy ? ` · ${sortBy} ${sortDir}` : ''}
-                    {' · '}click a row for full values
-                  </p>
-                </div>
-                {queryLoading ? (
-                  <span className="text-xs text-[var(--text-muted)]">Refreshing…</span>
-                ) : null}
+              <div>
+                <h3 className="text-sm font-semibold tracking-tight text-[var(--text)]">
+                  Results
+                </h3>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                  {total.toLocaleString()} row{total === 1 ? '' : 's'} from {side}
+                  {columns.length ? ` · ${columns.length} columns` : ''}
+                  {sortBy ? ` · sorted by ${sortBy} ${sortDir}` : ''}
+                  {' · '}click a row for full values
+                  {queryLoading ? ' · refreshing…' : ''}
+                </p>
               </div>
 
               <TableShell

@@ -1,7 +1,7 @@
 # Portico
 
 Sync API and admin UI for managing connections and syncing tables
-(MySQL/Postgres → Typesense).
+(MySQL, Postgres, SQLite, Typesense, MongoDB, Redis — each as source or destination).
 
 ## Structure
 

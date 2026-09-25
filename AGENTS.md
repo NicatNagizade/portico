@@ -1,6 +1,6 @@
 # Portico
 
-Sync API + admin UI. Sources (MySQL / Postgres) → destinations (Typesense / MongoDB / MySQL / Postgres). Structure is ready for more pairs without rewriting the orchestrator.
+Sync API + admin UI. Connections (MySQL / Postgres / SQLite / Typesense / MongoDB / Redis) work as both sources and destinations. Structure is ready for more pairs without rewriting the orchestrator.
 
 ## Layout
 
@@ -78,10 +78,10 @@ These come from how this project is built day to day. Prefer them over “clever
 
 ## Domain model
 
-- **Connections** — `mysql` | `postgres` | `typesense` | `mongodb`. Config JSON sealed at rest.
+- **Connections** — `mysql` | `postgres` | `sqlite` | `typesense` | `mongodb` | `redis`. Each type can be source or destination. Config JSON sealed at rest. Redis stores JSON docs at `{table}:{id}`.
 - **Sync jobs** — `source_connection_id` → `source_table` → `destination_connection_id` → `destination_table`, plus `chunk_size`, `workers`, opaque `config`.
 - **Fields** — optional overrides (rename / type / exclude / value maps). Omit all → pass through every source column. `active=false` → exclude from import. Coerce values to the declared destination type before write (e.g. object → string when type is string). Root fields live on the sync job; relation field overrides nest under that relation’s `fields[]`. Optional `values` (`sync_job_fields_values`) map source cell values to destination values (e.g. `1` → `success`); unmatched values pass through.
-- **Rules** — optional source filters (`field` + `operator` + `value`) AND’d before Count/Read. Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `like`, `is_null`, `is_not_null`. `active=false` skips the rule. Applied at the source SQL layer (not post-fetch).
+- **Rules** — optional source filters (`field` + `operator` + `value`) AND’d before Count/Read. Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `like`, `is_null`, `is_not_null`. `active=false` skips the rule. Applied by the source connector (SQL WHERE or in-memory for document stores).
 - **Relations** — `belongs_to_many` / `has_many` / `has_one` / `belongs_to`. Nest children under `relations[]` and field overrides under `fields[]` on the parent relation (DB still stores `parent_id` / `sync_job_relation_id`). `belongs_to_many` stores `pivot_table` inside relation `config` JSON. Always select all related columns. Empty FK/key fields fall back to the related field name. Emit arrays/nested objects in the destination doc — not flattened joins. `active=false` skips the relation.
 - **Sync logs** — status, `rows_total` (source count at start), `rows_synced` (updated after each chunk), `duration_ms` (updated with progress). Progress UI = `rows_synced / rows_total` — nothing fancier.
 - **Sync behavior** — destination is prepared/cleared then bulk-written in chunks from the job’s `chunk_size`.
