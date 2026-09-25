@@ -638,6 +638,122 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 }
 
+func TestNestedRelationTreeCRUD(t *testing.T) {
+	gdb := setupTestDB(t)
+	r := setupRouter(t, gdb, connectors.NewRegistry())
+
+	src := models.Connection{
+		Name:   "src-nested",
+		Type:   models.ConnectionTypePostgres,
+		Config: datatypes.JSON([]byte(`{"host":"localhost","port":5432,"user":"u","password":"p","database":"db","sslmode":"disable"}`)),
+	}
+	dst := models.Connection{
+		Name:   "dst-nested",
+		Type:   models.ConnectionTypeTypesense,
+		Config: datatypes.JSON([]byte(`{"host":"localhost","port":8108,"api_key":"xyz"}`)),
+	}
+	if err := gdb.Create(&src).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dst).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{
+		"name":                      "users-nested-tree",
+		"source_connection_id":      src.ID,
+		"source_table":              "users",
+		"destination_connection_id": dst.ID,
+		"destination_table":         "users",
+		"relations": []map[string]any{
+			{
+				"name":  "posts",
+				"type":  "has_many",
+				"table": "posts",
+				"fields": []map[string]any{
+					{"source_name": "title", "destination_name": "title", "destination_type": "string"},
+				},
+				"relations": []map[string]any{
+					{
+						"name":  "comments",
+						"type":  "has_many",
+						"table": "comments",
+						"relations": []map[string]any{
+							{"name": "reactions", "type": "has_many", "table": "reactions"},
+						},
+					},
+				},
+			},
+		},
+	}
+	payload, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/sync-jobs", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var job models.SyncJob
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	if len(job.Relations) != 1 || job.Relations[0].Name != "posts" {
+		t.Fatalf("root relations: %+v", job.Relations)
+	}
+	posts := job.Relations[0]
+	if len(posts.Fields) != 1 || posts.Fields[0].SourceName != "title" {
+		t.Fatalf("posts fields: %+v", posts.Fields)
+	}
+	if len(posts.Relations) != 1 || posts.Relations[0].Name != "comments" {
+		t.Fatalf("comments under posts: %+v", posts.Relations)
+	}
+	comments := posts.Relations[0]
+	if len(comments.Relations) != 1 || comments.Relations[0].Name != "reactions" {
+		t.Fatalf("reactions under comments: %+v", comments.Relations)
+	}
+
+	// parent_id is internal — must not appear in API JSON
+	var raw map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	rels, _ := raw["relations"].([]any)
+	if len(rels) != 1 {
+		t.Fatalf("raw relations: %+v", raw["relations"])
+	}
+	root, _ := rels[0].(map[string]any)
+	if _, hasParent := root["parent_id"]; hasParent {
+		t.Fatalf("parent_id should be omitted from API JSON: %+v", root)
+	}
+	if _, hasParent := root["parent"]; hasParent {
+		t.Fatalf("parent should be omitted from API JSON: %+v", root)
+	}
+
+	// DB still stores parent_id flat
+	var flat []models.SyncJobRelation
+	if err := gdb.Where("sync_job_id = ?", job.ID).Find(&flat).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(flat) != 3 {
+		t.Fatalf("expected 3 flat rows, got %d", len(flat))
+	}
+	byName := map[string]models.SyncJobRelation{}
+	for _, rel := range flat {
+		byName[rel.Name] = rel
+	}
+	if byName["posts"].ParentID != nil {
+		t.Fatalf("posts should be root, got parent_id=%v", byName["posts"].ParentID)
+	}
+	if byName["comments"].ParentID == nil || *byName["comments"].ParentID != byName["posts"].ID {
+		t.Fatalf("comments parent: %+v", byName["comments"])
+	}
+	if byName["reactions"].ParentID == nil || *byName["reactions"].ParentID != byName["comments"].ID {
+		t.Fatalf("reactions parent: %+v", byName["reactions"])
+	}
+}
+
 type mockSource struct {
 	schema    *connectors.TableSchema
 	rows      []map[string]any
@@ -2103,4 +2219,3 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 		t.Fatalf("expected 404 for missing job, got %d body=%s", w.Code, w.Body.String())
 	}
 }
-

@@ -22,7 +22,7 @@ cp connections.json.example connections.json
 make import-connections   # from repo root
 ```
 
-Upserts connections by `(name, type)` and sync jobs by `name`. Jobs reference connections by name; nested `relations` / `fields` / `rules` / `values` match the sync-job API (negative ids link parents/fields). Override path with `CONNECTIONS_FILE`.
+Upserts connections by `(name, type)` and sync jobs by `name`. Jobs reference connections by name; nested `relations` (tree via `relations[]`) / `fields` / `rules` / `values` match the sync-job API. Override path with `CONNECTIONS_FILE`.
 
 ## Environment
 

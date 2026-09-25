@@ -16,6 +16,48 @@ import { formatDate } from '../lib/format'
 import { ruleNeedsValue, ruleOperatorLabel } from '../lib/ruleOperators'
 import { parseConfig } from '../lib/connectionTypes'
 
+function countRelations(relations = []) {
+  return relations.reduce((n, r) => n + 1 + countRelations(r.relations || []), 0)
+}
+
+function RelationListItem({ relation }) {
+  const relConfig = parseConfig(relation.config)
+  const children = relation.relations || []
+  return (
+    <li className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/60 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-semibold">{relation.name}</span>
+        <MetaChip>{relation.active === false ? 'inactive' : 'active'}</MetaChip>
+      </div>
+      <p className="mt-2 font-mono text-xs leading-relaxed text-[var(--text-muted)]">
+        {relation.type} · table={relation.table}
+        {relConfig.pivot_table ? ` · pivot=${relConfig.pivot_table}` : ''}
+        {relation.foreign_key ? ` · fk=${relation.foreign_key}` : ''}
+        {relation.related_key ? ` · rk=${relation.related_key}` : ''}
+      </p>
+      {(relation.fields || []).length > 0 ? (
+        <ul className="mt-3 space-y-1 border-t border-[var(--border)] pt-3">
+          {relation.fields.map((field) => (
+            <li key={field.id} className="font-mono text-xs text-[var(--text-muted)]">
+              {field.source_name}
+              {field.destination_name ? ` → ${field.destination_name}` : ''}
+              {field.destination_type ? ` (${field.destination_type})` : ''}
+              {(field.values || []).length > 0 ? ` · ${field.values.length} value map(s)` : ''}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {children.length > 0 ? (
+        <ul className="mt-3 space-y-3 border-t border-[var(--border)] pt-3">
+          {children.map((child) => (
+            <RelationListItem key={child.id} relation={child} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  )
+}
+
 function Icon({ children }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -363,49 +405,16 @@ export default function SyncJobDetailPage() {
 
         <Panel
           title="Relations"
-          description={`${(job.relations || []).length} configured`}
+          description={`${countRelations(job.relations)} configured`}
           className="animate-fade-up stagger-5 lg:col-span-2"
         >
           {(job.relations || []).length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">No relations configured.</p>
           ) : (
             <ul className="space-y-3">
-              {job.relations.map((relation) => {
-                const relConfig = parseConfig(relation.config)
-                const parent = (job.relations || []).find((r) => r.id === relation.parent_id)
-                return (
-                  <li
-                    key={relation.id}
-                    className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/60 p-4"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-semibold">{relation.name}</span>
-                      <MetaChip>{relation.active === false ? 'inactive' : 'active'}</MetaChip>
-                    </div>
-                    <p className="mt-2 font-mono text-xs leading-relaxed text-[var(--text-muted)]">
-                      {relation.type} · table={relation.table}
-                      {relConfig.pivot_table ? ` · pivot=${relConfig.pivot_table}` : ''}
-                      {relation.foreign_key ? ` · fk=${relation.foreign_key}` : ''}
-                      {relation.related_key ? ` · rk=${relation.related_key}` : ''}
-                      {parent ? ` · parent=${parent.name}` : ''}
-                    </p>
-                    {(relation.fields || []).length > 0 ? (
-                      <ul className="mt-3 space-y-1 border-t border-[var(--border)] pt-3">
-                        {relation.fields.map((field) => (
-                          <li key={field.id} className="font-mono text-xs text-[var(--text-muted)]">
-                            {field.source_name}
-                            {field.destination_name ? ` → ${field.destination_name}` : ''}
-                            {field.destination_type ? ` (${field.destination_type})` : ''}
-                            {(field.values || []).length > 0
-                              ? ` · ${field.values.length} value map(s)`
-                              : ''}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </li>
-                )
-              })}
+              {job.relations.map((relation) => (
+                <RelationListItem key={relation.id} relation={relation} />
+              ))}
             </ul>
           )}
         </Panel>

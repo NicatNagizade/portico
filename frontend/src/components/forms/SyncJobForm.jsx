@@ -77,6 +77,70 @@ function pivotFromConfig(config) {
   return parsed.pivot_table || ''
 }
 
+function mapRelation(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    type: r.type || 'has_many',
+    table: r.table || '',
+    pivot_table: pivotFromConfig(r.config),
+    foreign_key: r.foreign_key || '',
+    related_key: r.related_key || '',
+    active: r.active !== false,
+    fields: (r.fields || []).map(mapField),
+    relations: (r.relations || []).map(mapRelation),
+  }
+}
+
+function fieldPayload(f) {
+  return {
+    id: f.id && f.id > 0 ? f.id : undefined,
+    source_name: f.source_name.trim(),
+    destination_name: f.destination_name?.trim() || undefined,
+    destination_type: f.destination_type || undefined,
+    active: f.active !== false,
+    values: fieldValuesPayload(f.values),
+  }
+}
+
+function relationPayload(r) {
+  const out = {
+    name: r.name.trim(),
+    type: r.type,
+    table: r.table.trim(),
+    foreign_key: r.foreign_key?.trim() || undefined,
+    related_key: r.related_key?.trim() || undefined,
+    active: r.active !== false,
+  }
+  // Only real DB ids — UI temp ids are negative and rejected by the API.
+  if (r.id && r.id > 0) {
+    out.id = r.id
+  }
+  if (r.type === 'belongs_to_many' && r.pivot_table?.trim()) {
+    out.config = { pivot_table: r.pivot_table.trim() }
+  }
+  const fields = (r.fields || []).filter((f) => f.source_name.trim()).map(fieldPayload)
+  if (fields.length) {
+    out.fields = fields
+  }
+  const kids = (r.relations || [])
+    .filter((child) => child.name.trim() && child.table.trim())
+    .map(relationPayload)
+  if (kids.length) {
+    out.relations = kids
+  }
+  return out
+}
+
+function keepRelations(relations) {
+  return relations
+    .filter((r) => r.name.trim() && r.table.trim())
+    .map((r) => ({
+      ...r,
+      relations: keepRelations(r.relations || []),
+    }))
+}
+
 export default function SyncJobForm({
   initial,
   connections = [],
@@ -99,18 +163,7 @@ export default function SyncJobForm({
   const [fields, setFields] = useState(() => (initial?.fields || []).map(mapField))
   const [rules, setRules] = useState(() => (initial?.rules || []).map(mapRule))
   const [relations, setRelations] = useState(() =>
-    (initial?.relations || []).map((r) => ({
-      id: r.id,
-      name: r.name || '',
-      type: r.type || 'has_many',
-      table: r.table || '',
-      pivot_table: pivotFromConfig(r.config),
-      foreign_key: r.foreign_key || '',
-      related_key: r.related_key || '',
-      parent_id: r.parent_id ?? '',
-      active: r.active !== false,
-      fields: (r.fields || []).map(mapField),
-    })),
+    (initial?.relations || []).map(mapRelation),
   )
 
   const { tables, columnsByTable, ensureTables, ensureColumns } =
@@ -161,52 +214,12 @@ export default function SyncJobForm({
       if (tokens.length) payloadConfig.token_separators = tokens
     }
 
-    const keptRelations = relations.filter((r) => r.name.trim() && r.table.trim())
+    const keptRelations = keepRelations(relations)
+    const relationPayloadList = keptRelations.map(relationPayload)
 
-    const relationPayload = keptRelations.map((r) => {
-      const out = {
-        id: r.id,
-        name: r.name.trim(),
-        type: r.type,
-        table: r.table.trim(),
-        foreign_key: r.foreign_key?.trim() || undefined,
-        related_key: r.related_key?.trim() || undefined,
-        active: r.active !== false,
-      }
-      if (r.parent_id !== '' && r.parent_id != null) {
-        out.parent_id = Number(r.parent_id)
-      }
-      if (r.type === 'belongs_to_many' && r.pivot_table?.trim()) {
-        out.config = { pivot_table: r.pivot_table.trim() }
-      }
-      return out
-    })
-
-    const fieldPayload = [
-      ...fields
-        .filter((f) => f.source_name.trim())
-        .map((f) => ({
-          id: f.id && f.id > 0 ? f.id : undefined,
-          source_name: f.source_name.trim(),
-          destination_name: f.destination_name?.trim() || undefined,
-          destination_type: f.destination_type || undefined,
-          active: f.active !== false,
-          values: fieldValuesPayload(f.values),
-        })),
-      ...keptRelations.flatMap((r) =>
-        (r.fields || [])
-          .filter((f) => f.source_name.trim())
-          .map((f) => ({
-            id: f.id && f.id > 0 ? f.id : undefined,
-            sync_job_relation_id: r.id,
-            source_name: f.source_name.trim(),
-            destination_name: f.destination_name?.trim() || undefined,
-            destination_type: f.destination_type || undefined,
-            active: f.active !== false,
-            values: fieldValuesPayload(f.values),
-          })),
-      ),
-    ]
+    const fieldPayloadList = fields
+      .filter((f) => f.source_name.trim())
+      .map(fieldPayload)
 
     const rulePayload = rules
       .filter((r) => r.field.trim())
@@ -227,9 +240,9 @@ export default function SyncJobForm({
       chunk_size: Number(chunkSize) || 500,
       workers: Number(workers) || 2,
       config: payloadConfig,
-      fields: fieldPayload,
+      fields: fieldPayloadList,
       rules: rulePayload,
-      relations: relationPayload,
+      relations: relationPayloadList,
     }
 
     onSubmit(payload)

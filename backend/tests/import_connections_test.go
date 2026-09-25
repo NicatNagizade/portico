@@ -161,8 +161,20 @@ func TestImportSyncJobsWithNested(t *testing.T) {
 				"workers":                 1,
 				"relations": []map[string]any{
 					{
-						"id": -1, "name": "posts", "type": "has_many",
+						"name": "posts", "type": "has_many",
 						"table": "posts", "foreign_key": "user_id", "related_key": "id",
+						"fields": []map[string]any{
+							{
+								"source_name":      "title",
+								"destination_name": "title",
+								"destination_type": "string",
+							},
+						},
+						"relations": []map[string]any{
+							{
+								"name": "comments", "type": "has_many", "table": "comments",
+							},
+						},
 					},
 				},
 				"fields": []map[string]any{
@@ -172,12 +184,6 @@ func TestImportSyncJobsWithNested(t *testing.T) {
 							{"source_value": "1", "destination_value": "success"},
 							{"source_value": "2", "destination_value": "failed"},
 						},
-					},
-					{
-						"sync_job_relation_id": -1,
-						"source_name":          "title",
-						"destination_name":     "title",
-						"destination_type":     "string",
 					},
 				},
 				"rules": []map[string]any{
@@ -204,6 +210,9 @@ func TestImportSyncJobsWithNested(t *testing.T) {
 	}
 	if len(job.Relations) != 1 || job.Relations[0].Name != "posts" {
 		t.Fatalf("relations: %+v", job.Relations)
+	}
+	if len(job.Relations[0].Relations) != 1 || job.Relations[0].Relations[0].Name != "comments" {
+		t.Fatalf("nested relations: %+v", job.Relations[0].Relations)
 	}
 	if len(job.Fields) != 1 || job.Fields[0].SourceName != "status" {
 		t.Fatalf("root fields: %+v", job.Fields)

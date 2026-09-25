@@ -25,9 +25,9 @@ function emptyRelation() {
     pivot_table: '',
     foreign_key: '',
     related_key: '',
-    parent_id: '',
     active: true,
     fields: [],
+    relations: [],
   }
 }
 
@@ -66,24 +66,249 @@ function ChevronIcon({ open }) {
   )
 }
 
-function depthOf(row, relations) {
-  let depth = 0
-  let current = row
-  const seen = new Set()
-  while (current?.parent_id !== '' && current?.parent_id != null) {
-    if (seen.has(String(current.id))) break
-    seen.add(String(current.id))
-    const parent = relations.find((r) => String(r.id) === String(current.parent_id))
-    if (!parent) break
-    depth += 1
-    current = parent
-  }
-  return depth
+function countOwnFields(row) {
+  return (row.fields || []).filter((f) => f.source_name?.trim()).length
 }
 
-function parentName(row, relations) {
-  if (row.parent_id === '' || row.parent_id == null) return null
-  return relations.find((r) => String(r.id) === String(row.parent_id))?.name || null
+function RelationCard({
+  row,
+  depth,
+  parentTable,
+  onChange,
+  onRemove,
+  tables,
+  columnsByTable,
+  onNeedTables,
+  onNeedColumns,
+  expanded,
+  setExpanded,
+}) {
+  const isOpen = expanded.has(String(row.id))
+  const isBelongsToMany = row.type === 'belongs_to_many'
+  const isBelongsTo = row.type === 'belongs_to'
+  const relatedColumns = columnsByTable[row.table] || []
+  const pivotColumns = columnsByTable[row.pivot_table] || []
+  const parentColumns = columnsByTable[parentTable] || []
+  const fkTable = isBelongsToMany ? row.pivot_table : isBelongsTo ? parentTable : row.table
+  const fkColumns = isBelongsToMany
+    ? pivotColumns
+    : isBelongsTo
+      ? parentColumns
+      : relatedColumns
+  const fieldCount = countOwnFields(row)
+  const children = row.relations || []
+  const label = row.name.trim() || 'Untitled relation'
+
+  function toggleExpanded() {
+    const key = String(row.id)
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function patch(next) {
+    onChange({ ...row, ...next })
+  }
+
+  function updateChild(index, next) {
+    patch({
+      relations: children.map((child, i) => (i === index ? next : child)),
+    })
+  }
+
+  function removeChild(index) {
+    const removed = children[index]
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      next.delete(String(removed.id))
+      return next
+    })
+    patch({ relations: children.filter((_, i) => i !== index) })
+  }
+
+  function addChild() {
+    const child = emptyRelation()
+    patch({ relations: [...children, child] })
+    setExpanded((prev) => new Set(prev).add(String(child.id)))
+  }
+
+  return (
+    <div className="space-y-2">
+      <div
+        style={{ marginLeft: depth ? Math.min(depth, 4) * 12 : 0 }}
+        className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+      >
+        <div className="flex items-center gap-2 px-2 py-2 sm:px-3">
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-[var(--bg-elevated)]/80"
+            onClick={toggleExpanded}
+            aria-expanded={isOpen}
+          >
+            <span className="text-[var(--text-muted)]">
+              <ChevronIcon open={isOpen} />
+            </span>
+            <span className="max-w-[12rem] truncate text-sm font-medium text-[var(--text)] sm:max-w-none">
+              {label}
+            </span>
+            <MetaChip>{row.type}</MetaChip>
+            {row.table ? <MetaChip>{row.table}</MetaChip> : null}
+            {fieldCount > 0 ? (
+              <MetaChip>
+                {fieldCount} field{fieldCount === 1 ? '' : 's'}
+              </MetaChip>
+            ) : null}
+            {row.active === false ? (
+              <span className="rounded-md bg-[var(--danger-soft)] px-2 py-0.5 font-mono text-[11px] text-[var(--danger)]">
+                off
+              </span>
+            ) : null}
+          </button>
+          <IconButton label="Remove relation" tone="danger" onClick={onRemove}>
+            <TrashIcon />
+          </IconButton>
+        </div>
+
+        {isOpen ? (
+          <div className="space-y-4 border-t border-[var(--border)] bg-[var(--bg-elevated)]/40 px-3 py-3 sm:px-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="block text-xs">
+                <span className="mb-1 block text-[var(--text-muted)]">Name</span>
+                <input
+                  className={compactInput}
+                  value={row.name}
+                  onChange={(e) => patch({ name: e.target.value })}
+                  required
+                  placeholder="posts"
+                />
+              </label>
+              <label className="block text-xs">
+                <span className="mb-1 block text-[var(--text-muted)]">Type</span>
+                <select
+                  className={compactInput}
+                  value={row.type}
+                  onChange={(e) => patch({ type: e.target.value })}
+                >
+                  {RELATION_TYPES.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-xs">
+                <span className="mb-1 block text-[var(--text-muted)]">Related table</span>
+                <AutocompleteInput
+                  className={compactInput}
+                  options={tables}
+                  value={row.table}
+                  onFocus={onNeedTables}
+                  onChange={(e) => patch({ table: e.target.value })}
+                  required
+                />
+              </label>
+              {isBelongsToMany && (
+                <label className="block text-xs">
+                  <span className="mb-1 block text-[var(--text-muted)]">Pivot table</span>
+                  <AutocompleteInput
+                    className={compactInput}
+                    options={tables}
+                    value={row.pivot_table || ''}
+                    onFocus={onNeedTables}
+                    onChange={(e) => patch({ pivot_table: e.target.value })}
+                    required
+                  />
+                </label>
+              )}
+              <label className="block text-xs">
+                <span className="mb-1 block text-[var(--text-muted)]">Foreign key</span>
+                <AutocompleteInput
+                  className={compactInput}
+                  options={columnNames(fkColumns)}
+                  value={row.foreign_key || ''}
+                  onFocus={() => fkTable && onNeedColumns?.(fkTable)}
+                  onChange={(e) => patch({ foreign_key: e.target.value })}
+                  placeholder="auto"
+                />
+              </label>
+              {isBelongsToMany && (
+                <label className="block text-xs">
+                  <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
+                  <AutocompleteInput
+                    className={compactInput}
+                    options={columnNames(pivotColumns)}
+                    value={row.related_key || ''}
+                    onFocus={() => row.pivot_table && onNeedColumns?.(row.pivot_table)}
+                    onChange={(e) => patch({ related_key: e.target.value })}
+                    placeholder="auto"
+                  />
+                </label>
+              )}
+              <label className="flex items-end gap-2 pb-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[var(--accent)]"
+                  checked={row.active !== false}
+                  onChange={(e) => patch({ active: e.target.checked })}
+                />
+                Active
+              </label>
+            </div>
+
+            <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)]/70 p-3">
+              <FieldEditor
+                compact
+                title="Field overrides on related rows"
+                fields={row.fields || []}
+                onChange={(fields) => patch({ fields })}
+                sourceColumns={relatedColumns}
+                onNeedSourceColumns={() => onNeedColumns?.(row.table)}
+                onAutofill={
+                  row.table?.trim()
+                    ? async () => {
+                        const columns = (await onNeedColumns?.(row.table)) || []
+                        patch({
+                          fields: fieldsFromSourceColumns(columns, row.fields || []),
+                        })
+                      }
+                    : undefined
+                }
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <SecondaryButton type="button" onClick={addChild}>
+                Add nested relation
+              </SecondaryButton>
+              <GhostButton type="button" onClick={toggleExpanded}>
+                Done
+              </GhostButton>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {children.map((child, index) => (
+        <RelationCard
+          key={child.id}
+          row={child}
+          depth={depth + 1}
+          parentTable={row.table || parentTable}
+          onChange={(next) => updateChild(index, next)}
+          onRemove={() => removeChild(index)}
+          tables={tables}
+          columnsByTable={columnsByTable}
+          onNeedTables={onNeedTables}
+          onNeedColumns={onNeedColumns}
+          expanded={expanded}
+          setExpanded={setExpanded}
+        />
+      ))}
+    </div>
+  )
 }
 
 export default function RelationEditor({
@@ -97,8 +322,8 @@ export default function RelationEditor({
 }) {
   const [expanded, setExpanded] = useState(() => new Set())
 
-  function updateRow(index, patch) {
-    onChange(relations.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  function updateRow(index, next) {
+    onChange(relations.map((row, i) => (i === index ? next : row)))
   }
 
   function removeRow(index) {
@@ -108,37 +333,13 @@ export default function RelationEditor({
       next.delete(String(removed.id))
       return next
     })
-    onChange(
-      relations
-        .filter((_, i) => i !== index)
-        .map((row) =>
-          String(row.parent_id) === String(removed.id) ? { ...row, parent_id: '' } : row,
-        ),
-    )
+    onChange(relations.filter((_, i) => i !== index))
   }
 
   function addRelation() {
     const row = emptyRelation()
     onChange([...relations, row])
     setExpanded((prev) => new Set(prev).add(String(row.id)))
-  }
-
-  function toggleExpanded(id) {
-    const key = String(id)
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
-
-  function parentTableFor(row) {
-    if (row.parent_id === '' || row.parent_id == null) {
-      return sourceTable
-    }
-    const parent = relations.find((r) => String(r.id) === String(row.parent_id))
-    return parent?.table || sourceTable
   }
 
   return (
@@ -151,7 +352,7 @@ export default function RelationEditor({
           <div>
             <h3 className="text-sm font-semibold text-[var(--text)]">Relations</h3>
             <p className="text-xs text-[var(--text-muted)]">
-              Nested related rows on the destination document. Collapse cards you are not editing.
+              Nested related rows on the destination document. Nest children under a relation.
             </p>
           </div>
         </div>
@@ -166,208 +367,22 @@ export default function RelationEditor({
         </p>
       ) : (
         <div className="space-y-2">
-          {relations.map((row, index) => {
-            const isOpen = expanded.has(String(row.id))
-            const isBelongsToMany = row.type === 'belongs_to_many'
-            const isBelongsTo = row.type === 'belongs_to'
-            const relatedColumns = columnsByTable[row.table] || []
-            const pivotColumns = columnsByTable[row.pivot_table] || []
-            const parentTable = parentTableFor(row)
-            const parentColumns = columnsByTable[parentTable] || []
-            const fkTable = isBelongsToMany ? row.pivot_table : isBelongsTo ? parentTable : row.table
-            const fkColumns = isBelongsToMany
-              ? pivotColumns
-              : isBelongsTo
-                ? parentColumns
-                : relatedColumns
-            const parentOptions = relations.filter((r) => r.id !== row.id && r.name)
-            const depth = depthOf(row, relations)
-            const nestedUnder = parentName(row, relations)
-            const fieldCount = (row.fields || []).filter((f) => f.source_name?.trim()).length
-            const label = row.name.trim() || 'Untitled relation'
-
-            return (
-              <div
-                key={row.id}
-                style={{ marginLeft: depth ? Math.min(depth, 4) * 12 : 0 }}
-                className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]"
-              >
-                <div className="flex items-center gap-2 px-2 py-2 sm:px-3">
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-[var(--bg-elevated)]/80"
-                    onClick={() => toggleExpanded(row.id)}
-                    aria-expanded={isOpen}
-                  >
-                    <span className="text-[var(--text-muted)]">
-                      <ChevronIcon open={isOpen} />
-                    </span>
-                    <span className="max-w-[12rem] truncate text-sm font-medium text-[var(--text)] sm:max-w-none">
-                      {label}
-                    </span>
-                    <MetaChip>{row.type}</MetaChip>
-                    {row.table ? <MetaChip>{row.table}</MetaChip> : null}
-                    {nestedUnder ? <MetaChip>under {nestedUnder}</MetaChip> : null}
-                    {fieldCount > 0 ? (
-                      <MetaChip>
-                        {fieldCount} field{fieldCount === 1 ? '' : 's'}
-                      </MetaChip>
-                    ) : null}
-                    {row.active === false ? (
-                      <span className="rounded-md bg-[var(--danger-soft)] px-2 py-0.5 font-mono text-[11px] text-[var(--danger)]">
-                        off
-                      </span>
-                    ) : null}
-                  </button>
-                  <IconButton
-                    label="Remove relation"
-                    tone="danger"
-                    onClick={() => removeRow(index)}
-                  >
-                    <TrashIcon />
-                  </IconButton>
-                </div>
-
-                {isOpen ? (
-                  <div className="space-y-4 border-t border-[var(--border)] bg-[var(--bg-elevated)]/40 px-3 py-3 sm:px-4">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      <label className="block text-xs">
-                        <span className="mb-1 block text-[var(--text-muted)]">Name</span>
-                        <input
-                          className={compactInput}
-                          value={row.name}
-                          onChange={(e) => updateRow(index, { name: e.target.value })}
-                          required
-                          placeholder="posts"
-                        />
-                      </label>
-                      <label className="block text-xs">
-                        <span className="mb-1 block text-[var(--text-muted)]">Type</span>
-                        <select
-                          className={compactInput}
-                          value={row.type}
-                          onChange={(e) => updateRow(index, { type: e.target.value })}
-                        >
-                          {RELATION_TYPES.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="block text-xs">
-                        <span className="mb-1 block text-[var(--text-muted)]">Related table</span>
-                        <AutocompleteInput
-                          className={compactInput}
-                          options={tables}
-                          value={row.table}
-                          onFocus={onNeedTables}
-                          onChange={(e) => updateRow(index, { table: e.target.value })}
-                          required
-                        />
-                      </label>
-                      {isBelongsToMany && (
-                        <label className="block text-xs">
-                          <span className="mb-1 block text-[var(--text-muted)]">Pivot table</span>
-                          <AutocompleteInput
-                            className={compactInput}
-                            options={tables}
-                            value={row.pivot_table || ''}
-                            onFocus={onNeedTables}
-                            onChange={(e) => updateRow(index, { pivot_table: e.target.value })}
-                            required
-                          />
-                        </label>
-                      )}
-                      <label className="block text-xs">
-                        <span className="mb-1 block text-[var(--text-muted)]">Foreign key</span>
-                        <AutocompleteInput
-                          className={compactInput}
-                          options={columnNames(fkColumns)}
-                          value={row.foreign_key || ''}
-                          onFocus={() => fkTable && onNeedColumns?.(fkTable)}
-                          onChange={(e) => updateRow(index, { foreign_key: e.target.value })}
-                          placeholder="auto"
-                        />
-                      </label>
-                      {isBelongsToMany && (
-                        <label className="block text-xs">
-                          <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
-                          <AutocompleteInput
-                            className={compactInput}
-                            options={columnNames(pivotColumns)}
-                            value={row.related_key || ''}
-                            onFocus={() => row.pivot_table && onNeedColumns?.(row.pivot_table)}
-                            onChange={(e) => updateRow(index, { related_key: e.target.value })}
-                            placeholder="auto"
-                          />
-                        </label>
-                      )}
-                      <label className="block text-xs">
-                        <span className="mb-1 block text-[var(--text-muted)]">Parent relation</span>
-                        <select
-                          className={compactInput}
-                          value={
-                            row.parent_id === '' || row.parent_id == null
-                              ? ''
-                              : String(row.parent_id)
-                          }
-                          onChange={(e) =>
-                            updateRow(index, {
-                              parent_id: e.target.value === '' ? '' : Number(e.target.value),
-                            })
-                          }
-                        >
-                          <option value="">root (none)</option>
-                          {parentOptions.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {r.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="flex items-end gap-2 pb-1.5 text-sm">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-[var(--accent)]"
-                          checked={row.active !== false}
-                          onChange={(e) => updateRow(index, { active: e.target.checked })}
-                        />
-                        Active
-                      </label>
-                    </div>
-
-                    <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)]/70 p-3">
-                      <FieldEditor
-                        compact
-                        title="Field overrides on related rows"
-                        fields={row.fields || []}
-                        onChange={(fields) => updateRow(index, { fields })}
-                        sourceColumns={relatedColumns}
-                        onNeedSourceColumns={() => onNeedColumns?.(row.table)}
-                        onAutofill={
-                          row.table?.trim()
-                            ? async () => {
-                                const columns = (await onNeedColumns?.(row.table)) || []
-                                updateRow(index, {
-                                  fields: fieldsFromSourceColumns(columns, row.fields || []),
-                                })
-                              }
-                            : undefined
-                        }
-                      />
-                    </div>
-
-                    <div className="flex justify-end">
-                      <GhostButton type="button" onClick={() => toggleExpanded(row.id)}>
-                        Done
-                      </GhostButton>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            )
-          })}
+          {relations.map((row, index) => (
+            <RelationCard
+              key={row.id}
+              row={row}
+              depth={0}
+              parentTable={sourceTable}
+              onChange={(next) => updateRow(index, next)}
+              onRemove={() => removeRow(index)}
+              tables={tables}
+              columnsByTable={columnsByTable}
+              onNeedTables={onNeedTables}
+              onNeedColumns={onNeedColumns}
+              expanded={expanded}
+              setExpanded={setExpanded}
+            />
+          ))}
         </div>
       )}
     </div>

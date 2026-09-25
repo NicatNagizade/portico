@@ -49,12 +49,25 @@
       },
       "relations": [
         {
-          "id": -1,
           "name": "posts",
           "type": "has_many",
           "table": "posts",
           "foreign_key": "user_id",
-          "related_key": "id"
+          "related_key": "id",
+          "fields": [
+            {
+              "source_name": "title",
+              "destination_name": "title",
+              "destination_type": "string"
+            }
+          ],
+          "relations": [
+            {
+              "name": "comments",
+              "type": "has_many",
+              "table": "comments"
+            }
+          ]
         }
       ],
       "fields": [
@@ -66,12 +79,6 @@
         {
           "source_name": "username",
           "destination_name": "username",
-          "destination_type": "string"
-        },
-        {
-          "sync_job_relation_id": -1,
-          "source_name": "title",
-          "destination_name": "title",
           "destination_type": "string"
         },
         {

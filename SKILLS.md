@@ -45,9 +45,9 @@ New connectors land the same way — package under `connectors/<name>/` + regist
 - Operators: `eq` / `neq` / `gt` / `gte` / `lt` / `lte` / `in` / `not_in` / `like` / `is_null` / `is_not_null`.
 - `in` / `not_in` values are comma-separated. `is_null` / `is_not_null` ignore value.
 - `active=false` on a rule → skip that predicate.
-- Relations: `belongs_to_many` / `has_many` / `has_one` / `belongs_to`; optional `parent_id` (FK to another relation row) for nesting.
+- Relations: `belongs_to_many` / `has_many` / `has_one` / `belongs_to`; nest children under `relations[]` and field overrides under `fields[]` on the parent (API/import/UI). DB keeps `parent_id` / `sync_job_relation_id` internally.
 - M2M pivot table lives in relation `config.pivot_table`.
-- Field rows may set `sync_job_relation_id` to override columns on related docs; omit for root fields.
+- Root field rows omit relation scope; relation overrides nest under that relation’s `fields[]`.
 - Always select all related columns (no per-relation column pickers).
 - Empty foreign/related keys → fall back to the related field name.
 - Emit related rows as arrays / nested objects in the destination document — not SQL joins that flatten many-to-many.

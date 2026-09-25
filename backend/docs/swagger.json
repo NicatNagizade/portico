@@ -1291,11 +1291,14 @@
                 "name": {
                     "type": "string"
                 },
-                "parent_id": {
-                    "type": "integer"
-                },
                 "related_key": {
                     "type": "string"
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncJobRelation"
+                    }
                 },
                 "sync_job_id": {
                     "type": "integer"
@@ -1486,6 +1489,9 @@
                 "id": {
                     "type": "integer"
                 },
+                "relation": {
+                    "type": "string"
+                },
                 "source_name": {
                     "type": "string"
                 },
@@ -1532,6 +1538,12 @@
                 "config": {
                     "type": "object"
                 },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.FieldInput"
+                    }
+                },
                 "foreign_key": {
                     "type": "string"
                 },
@@ -1541,11 +1553,14 @@
                 "name": {
                     "type": "string"
                 },
-                "parent_id": {
-                    "type": "integer"
-                },
                 "related_key": {
                     "type": "string"
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.RelationInput"
+                    }
                 },
                 "table": {
                     "type": "string"

@@ -17,8 +17,8 @@ type File struct {
 }
 
 // SyncJobInput is a sync job in connections.json. Connections are referenced by name
-// (must be unique). Nested relations/fields/rules match the sync-job API; use negative
-// temporary ids to link fields/parents within the same job.
+// (must be unique). Nested relations nest under relations[]; relation field overrides
+// nest under each relation's fields[]; root fields omit relation scope.
 type SyncJobInput struct {
 	Name                  string                  `json:"name"`
 	SourceConnection      string                  `json:"source_connection"`
