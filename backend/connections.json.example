@@ -8,7 +8,7 @@
         "port": 5432,
         "user": "postgres",
         "password": "postgres",
-        "database": "example",
+        "database": "portico_example",
         "sslmode": "disable"
       }
     },
@@ -32,13 +32,6 @@
         "password": "password",
         "database": "portico_test",
         "auth_source": "admin"
-      }
-    },
-    {
-      "name": "local-sqlite",
-      "type": "sqlite",
-      "config": {
-        "path": "./example.db"
       }
     },
     {
