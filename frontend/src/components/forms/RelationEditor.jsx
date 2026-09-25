@@ -86,13 +86,26 @@ function RelationCard({
   const isOpen = expanded.has(String(row.id))
   const isBelongsToMany = row.type === 'belongs_to_many'
   const isBelongsTo = row.type === 'belongs_to'
+  const isHasManyOrOne = row.type === 'has_many' || row.type === 'has_one'
   const relatedColumns = columnsByTable[row.table] || []
   const pivotColumns = columnsByTable[row.pivot_table] || []
   const parentColumns = columnsByTable[parentTable] || []
+  // FK lives on: pivot (m2m), parent (belongs_to), or related (has_many/has_one).
   const fkTable = isBelongsToMany ? row.pivot_table : isBelongsTo ? parentTable : row.table
   const fkColumns = isBelongsToMany
     ? pivotColumns
     : isBelongsTo
+      ? parentColumns
+      : relatedColumns
+  // Related key lives on: pivot (m2m), parent (has_many/has_one local key), or related (belongs_to owner key).
+  const rkTable = isBelongsToMany
+    ? row.pivot_table
+    : isHasManyOrOne
+      ? parentTable
+      : row.table
+  const rkColumns = isBelongsToMany
+    ? pivotColumns
+    : isHasManyOrOne
       ? parentColumns
       : relatedColumns
   const fieldCount = countOwnFields(row)
@@ -234,19 +247,17 @@ function RelationCard({
                   placeholder="auto"
                 />
               </label>
-              {isBelongsToMany && (
-                <label className="block text-xs">
-                  <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
-                  <AutocompleteInput
-                    className={compactInput}
-                    options={columnNames(pivotColumns)}
-                    value={row.related_key || ''}
-                    onFocus={() => row.pivot_table && onNeedColumns?.(row.pivot_table)}
-                    onChange={(e) => patch({ related_key: e.target.value })}
-                    placeholder="auto"
-                  />
-                </label>
-              )}
+              <label className="block text-xs">
+                <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
+                <AutocompleteInput
+                  className={compactInput}
+                  options={columnNames(rkColumns)}
+                  value={row.related_key || ''}
+                  onFocus={() => rkTable && onNeedColumns?.(rkTable)}
+                  onChange={(e) => patch({ related_key: e.target.value })}
+                  placeholder="auto"
+                />
+              </label>
               <label className="flex items-end gap-2 pb-1.5 text-sm">
                 <input
                   type="checkbox"

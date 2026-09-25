@@ -25,19 +25,37 @@ func TestSingularize(t *testing.T) {
 func TestResolveRelationKeys(t *testing.T) {
 	rel := syncsvc.ResolveRelationKeys("applicants", models.SyncJobRelation{
 		Name:  "tags",
+		Type:  models.RelationTypeBelongsToMany,
 		Table: "tags",
 	})
 	if rel.ForeignKey != "applicant_id" || rel.RelatedKey != "tag_id" {
-		t.Fatalf("unexpected defaults: %+v", rel)
+		t.Fatalf("unexpected belongs_to_many defaults: %+v", rel)
 	}
 
 	rel = syncsvc.ResolveRelationKeys("applicants", models.SyncJobRelation{
+		Type:       models.RelationTypeBelongsToMany,
 		Table:      "tags",
 		ForeignKey: "app_id",
 		RelatedKey: "label_id",
 	})
 	if rel.ForeignKey != "app_id" || rel.RelatedKey != "label_id" {
 		t.Fatalf("expected explicit keys preserved: %+v", rel)
+	}
+
+	rel = syncsvc.ResolveRelationKeys("users", models.SyncJobRelation{
+		Type:  models.RelationTypeHasMany,
+		Table: "posts",
+	})
+	if rel.ForeignKey != "user_id" || rel.RelatedKey != "" {
+		t.Fatalf("has_many should default fk only: %+v", rel)
+	}
+
+	rel = syncsvc.ResolveRelationKeys("posts", models.SyncJobRelation{
+		Type:  models.RelationTypeBelongsTo,
+		Table: "users",
+	})
+	if rel.ForeignKey != "user_id" || rel.RelatedKey != "" {
+		t.Fatalf("belongs_to should default fk from related table: %+v", rel)
 	}
 }
 
