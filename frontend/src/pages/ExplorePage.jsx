@@ -6,6 +6,7 @@ import {
   getSyncJob,
   listSyncJobs,
 } from '../api/syncJobs'
+import ExploreFilters from '../components/forms/ExploreFilters'
 import {
   EmptyState,
   ErrorBanner,
@@ -22,8 +23,12 @@ import {
   Th,
   inputClassName,
 } from '../components/ui'
+import useConnectionSchema from '../hooks/useConnectionSchema'
+import { ruleNeedsValue } from '../lib/ruleOperators'
+import { columnNames } from '../lib/sourceColumns'
 
-const PAGE_SIZE = 50
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+const DEFAULT_PAGE_SIZE = 50
 const JOB_LIST_SIZE = 100
 
 function cellDisplay(value, pretty = false) {
@@ -195,6 +200,38 @@ function columnsFromRows(rows, preferred = []) {
   return out
 }
 
+function jobFieldOptions(job) {
+  const seen = new Set()
+  const out = []
+  const add = (name) => {
+    const n = name?.trim()
+    if (!n || seen.has(n)) return
+    seen.add(n)
+    out.push(n)
+  }
+  for (const f of job?.fields || []) {
+    if (f.active === false) continue
+    add(f.destination_name || f.source_name)
+    add(f.source_name)
+  }
+  for (const r of job?.relations || []) {
+    if (r.active === false) continue
+    add(r.name)
+  }
+  return out
+}
+
+function activeExploreFilters(filters) {
+  return filters
+    .filter((f) => f.field?.trim())
+    .filter((f) => !ruleNeedsValue(f.operator) || String(f.value ?? '').trim() !== '')
+    .map((f) => ({
+      field: f.field.trim(),
+      operator: f.operator,
+      value: ruleNeedsValue(f.operator) ? String(f.value ?? '') : '',
+    }))
+}
+
 export default function ExplorePage() {
   const [jobs, setJobs] = useState([])
   const [jobsLoading, setJobsLoading] = useState(true)
@@ -202,11 +239,33 @@ export default function ExplorePage() {
   const [job, setJob] = useState(null)
   const [jobLoading, setJobLoading] = useState(false)
   const [side, setSide] = useState('source')
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [filters, setFilters] = useState([])
   const [preview, setPreview] = useState(resetPreviewState)
   const [queryLoading, setQueryLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
   const [selectedRow, setSelectedRow] = useState(null)
+
+  const schemaConnectionId =
+    side === 'source' ? job?.source_connection_id : job?.destination_connection_id
+  const schemaTable = side === 'source' ? job?.source_table : job?.destination_table
+  const { columnsByTable, ensureColumns } = useConnectionSchema(schemaConnectionId)
+  const schemaColumnNames = columnNames(columnsByTable[schemaTable?.trim()] || [])
+
+  const fieldOptions = (() => {
+    const seen = new Set()
+    const out = []
+    const add = (name) => {
+      if (!name || seen.has(name)) return
+      seen.add(name)
+      out.push(name)
+    }
+    for (const c of preview.columns) add(c)
+    for (const c of jobFieldOptions(job)) add(c)
+    for (const c of schemaColumnNames) add(c)
+    return out
+  })()
 
   useEffect(() => {
     let cancelled = false
@@ -232,6 +291,7 @@ export default function ExplorePage() {
     if (!jobId) {
       setJob(null)
       setSelectedRow(null)
+      setFilters([])
       return
     }
     let cancelled = false
@@ -240,6 +300,7 @@ export default function ExplorePage() {
       setError('')
       setPreview(resetPreviewState())
       setSelectedRow(null)
+      setFilters([])
       try {
         const data = await getSyncJob(jobId)
         if (!cancelled) setJob(data)
@@ -258,7 +319,12 @@ export default function ExplorePage() {
     }
   }, [jobId])
 
-  async function runQuery(nextPage = 1, nextSortBy = preview.sortBy, nextSortDir = preview.sortDir) {
+  async function runQuery(
+    nextPage = 1,
+    nextSortBy = preview.sortBy,
+    nextSortDir = preview.sortDir,
+    nextPageSize = pageSize,
+  ) {
     if (!jobId) return
     setQueryLoading(true)
     setError('')
@@ -266,11 +332,12 @@ export default function ExplorePage() {
       const data = await exploreSyncJob(jobId, {
         side,
         page: nextPage,
-        pageSize: PAGE_SIZE,
+        pageSize: nextPageSize,
         sortBy: nextSortBy,
         sortDir: nextSortDir,
+        filters: activeExploreFilters(filters),
       })
-      const size = data?.page_size || PAGE_SIZE
+      const size = data?.page_size || nextPageSize
       const rows = data?.rows || []
       const preferred = Array.isArray(data?.columns) ? data.columns : []
       // Keep prior column order on re-query (sort/page) so headers don't jump.
@@ -297,7 +364,7 @@ export default function ExplorePage() {
     setExporting(true)
     setError('')
     try {
-      await exportSyncJobCSV(jobId, { side })
+      await exportSyncJobCSV(jobId, { side, filters: activeExploreFilters(filters) })
     } catch (err) {
       setError(err.message || 'Failed to download CSV')
     } finally {
@@ -310,6 +377,11 @@ export default function ExplorePage() {
     setSide(next)
     setPreview(resetPreviewState())
     setSelectedRow(null)
+  }
+
+  function changePageSize(next) {
+    setPageSize(next)
+    if (preview.hasRun) runQuery(1, preview.sortBy, preview.sortDir, next)
   }
 
   function toggleSort(col) {
@@ -330,6 +402,7 @@ export default function ExplorePage() {
   const ruleCount = job?.rules?.length ?? 0
   const fieldCount = job?.fields?.length ?? 0
   const relationCount = job?.relations?.length ?? 0
+  const filterCount = activeExploreFilters(filters).length
 
   return (
     <div>
@@ -403,6 +476,19 @@ export default function ExplorePage() {
               </div>
             </div>
 
+            {jobId ? (
+              <div className="mt-4 border-t border-[var(--border)] pt-4">
+                <ExploreFilters
+                  filters={filters}
+                  onChange={setFilters}
+                  fieldOptions={fieldOptions}
+                  onNeedFields={() => {
+                    if (schemaTable) ensureColumns(schemaTable)
+                  }}
+                />
+              </div>
+            ) : null}
+
             {jobLoading ? (
               <p className="mt-4 border-t border-[var(--border)] pt-4 text-sm text-[var(--text-muted)]">
                 Loading job details…
@@ -414,6 +500,9 @@ export default function ExplorePage() {
                 </MetaChip>
                 <MetaChip>
                   {ruleCount} rule{ruleCount === 1 ? '' : 's'}
+                </MetaChip>
+                <MetaChip>
+                  {filterCount} filter{filterCount === 1 ? '' : 's'}
                 </MetaChip>
                 <MetaChip>
                   {fieldCount} field{fieldCount === 1 ? '' : 's'}
@@ -464,6 +553,7 @@ export default function ExplorePage() {
                 <p className="mt-0.5 text-xs text-[var(--text-muted)]">
                   {total.toLocaleString()} row{total === 1 ? '' : 's'} from {side}
                   {columns.length ? ` · ${columns.length} columns` : ''}
+                  {filterCount ? ` · ${filterCount} filter${filterCount === 1 ? '' : 's'}` : ''}
                   {sortBy ? ` · sorted by ${sortBy} ${sortDir}` : ''}
                   {' · '}click a row for full values
                   {queryLoading ? ' · refreshing…' : ''}
@@ -476,8 +566,10 @@ export default function ExplorePage() {
                     page={page}
                     totalPages={totalPages}
                     total={total}
-                    pageSize={PAGE_SIZE}
+                    pageSize={pageSize}
+                    pageSizeOptions={PAGE_SIZE_OPTIONS}
                     onPageChange={(next) => runQuery(next)}
+                    onPageSizeChange={changePageSize}
                     disabled={queryLoading}
                   />
                 }

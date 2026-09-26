@@ -21,6 +21,7 @@ make setup                              # deps + .env files
 make api                                # backend :8080
 make frontend                           # Vite :5173 (proxies /api)
 make test                               # backend tests (needs CGO)
+make test-frontend                      # Playwright (frontend/tests)
 make swagger                            # regenerate backend/docs/swagger.json only
 make lint                               # frontend oxlint
 make migrate-refresh                    # DESTRUCTIVE: drop all app tables + AutoMigrate

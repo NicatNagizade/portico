@@ -181,6 +181,56 @@ export function Field({ label, children, hint }) {
   )
 }
 
+export function Toggle({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+  className = '',
+  'aria-label': ariaLabel,
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel || label}
+      disabled={disabled}
+      onClick={() => onChange?.(!checked)}
+      className={[
+        'flex items-start gap-3 text-left',
+        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+        className,
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+          checked ? 'bg-[var(--accent)]' : 'bg-[var(--border-strong)]',
+        ].join(' ')}
+      >
+        <span
+          className={[
+            'inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+            checked ? 'translate-x-4' : 'translate-x-0.5',
+          ].join(' ')}
+        />
+      </span>
+      {(label || description) && (
+        <span className="min-w-0 flex-1">
+          {label ? (
+            <span className="block text-sm font-medium text-[var(--text)]">{label}</span>
+          ) : null}
+          {description ? (
+            <span className="mt-0.5 block text-xs text-[var(--text-muted)]">{description}</span>
+          ) : null}
+        </span>
+      )}
+    </button>
+  )
+}
+
 export function Panel({ title, description, children, className = '', actions }) {
   return (
     <section
@@ -272,39 +322,145 @@ export function Td({ children, className = '' }) {
   )
 }
 
-export function Pagination({ page, totalPages, total, pageSize, onPageChange, disabled }) {
+/** Build a compact page list with ellipses, e.g. [1, '…', 4, 5, 6, '…', 20]. */
+export function pageList(current, total) {
+  if (total <= 0) return []
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+
+  const set = new Set([1, total, current])
+  for (let d = 1; d <= 1; d++) {
+    set.add(current - d)
+    set.add(current + d)
+  }
+  if (current <= 3) {
+    set.add(2)
+    set.add(3)
+    set.add(4)
+  }
+  if (current >= total - 2) {
+    set.add(total - 1)
+    set.add(total - 2)
+    set.add(total - 3)
+  }
+
+  const sorted = [...set].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b)
+  const items = []
+  let prev = 0
+  for (const p of sorted) {
+    if (prev && p - prev > 1) items.push('…')
+    items.push(p)
+    prev = p
+  }
+  return items
+}
+
+function PaginationNavButton({ label, disabled, onClick, children }) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs font-medium text-[var(--text)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)] disabled:pointer-events-none disabled:opacity-40"
+    >
+      {children}
+    </button>
+  )
+}
+
+export function Pagination({
+  page,
+  totalPages,
+  total,
+  pageSize,
+  onPageChange,
+  pageSizeOptions,
+  onPageSizeChange,
+  disabled,
+}) {
   if (!total) return null
   const from = (page - 1) * pageSize + 1
   const to = Math.min(page * pageSize, total)
+  const pages = Math.max(totalPages, 1)
   const canPrev = page > 1
-  const canNext = page < totalPages
+  const canNext = page < pages
+  const showNav = pages > 1
+  const sizes = Array.isArray(pageSizeOptions) && pageSizeOptions.length > 0 ? pageSizeOptions : null
 
   return (
     <div className="flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--bg-elevated)]/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-xs text-[var(--text-muted)]">
-        Showing <span className="font-mono text-[var(--text)]">{from}</span>
-        –<span className="font-mono text-[var(--text)]">{to}</span> of{' '}
-        <span className="font-mono text-[var(--text)]">{total}</span>
-      </p>
-      <div className="flex items-center gap-2">
-        <SecondaryButton
-          type="button"
-          disabled={disabled || !canPrev}
-          onClick={() => onPageChange(page - 1)}
-        >
-          Previous
-        </SecondaryButton>
-        <span className="min-w-[5.5rem] text-center font-mono text-xs text-[var(--text-muted)]">
-          {page} / {Math.max(totalPages, 1)}
-        </span>
-        <SecondaryButton
-          type="button"
-          disabled={disabled || !canNext}
-          onClick={() => onPageChange(page + 1)}
-        >
-          Next
-        </SecondaryButton>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-xs text-[var(--text-muted)]">
+          Showing <span className="font-mono text-[var(--text)]">{from}</span>
+          –<span className="font-mono text-[var(--text)]">{to}</span> of{' '}
+          <span className="font-mono text-[var(--text)]">{total}</span>
+        </p>
+        {sizes && onPageSizeChange ? (
+          <label className="inline-flex items-center gap-2 text-xs text-[var(--text-muted)]">
+            <span className="sr-only">Rows per page</span>
+            <select
+              className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-xs text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              value={pageSize}
+              disabled={disabled}
+              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            >
+              {sizes.map((size) => (
+                <option key={size} value={size}>
+                  {size} / page
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
+
+      {showNav ? (
+        <nav className="flex flex-wrap items-center gap-1" aria-label="Pagination">
+          <PaginationNavButton
+            label="Previous page"
+            disabled={disabled || !canPrev}
+            onClick={() => onPageChange(page - 1)}
+          >
+            ‹
+          </PaginationNavButton>
+          {pageList(page, pages).map((item, i) =>
+            item === '…' ? (
+              <span
+                key={`ellipsis-${i}`}
+                className="inline-flex h-8 w-8 items-center justify-center font-mono text-xs text-[var(--text-muted)]"
+                aria-hidden="true"
+              >
+                …
+              </span>
+            ) : (
+              <button
+                key={item}
+                type="button"
+                aria-label={`Page ${item}`}
+                aria-current={item === page ? 'page' : undefined}
+                disabled={disabled || item === page}
+                onClick={() => onPageChange(item)}
+                className={[
+                  'inline-flex h-8 min-w-8 items-center justify-center rounded-md px-2 font-mono text-xs font-medium transition-colors disabled:pointer-events-none',
+                  item === page
+                    ? 'bg-[var(--accent)] text-white shadow-[var(--shadow-sm)] disabled:opacity-100'
+                    : 'border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)] disabled:opacity-40',
+                ].join(' ')}
+              >
+                {item}
+              </button>
+            ),
+          )}
+          <PaginationNavButton
+            label="Next page"
+            disabled={disabled || !canNext}
+            onClick={() => onPageChange(page + 1)}
+          >
+            ›
+          </PaginationNavButton>
+        </nav>
+      ) : null}
     </div>
   )
 }

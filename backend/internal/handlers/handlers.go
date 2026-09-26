@@ -88,6 +88,7 @@ func writeErr(c *gin.Context, err error, notFound error) {
 	if errors.Is(err, syncjob.ErrInvalid) ||
 		errors.Is(err, sync.ErrInvalidSide) ||
 		errors.Is(err, sync.ErrInvalidSort) ||
+		errors.Is(err, sync.ErrInvalidFilter) ||
 		errors.Is(err, sync.ErrDestinationReadUnsupported) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return

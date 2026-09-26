@@ -607,7 +607,7 @@
         },
         "/sync-jobs/{id}/explore": {
             "post": {
-                "description": "Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job.",
+                "description": "Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job. Optional filters are AND'd (with job rules on source).",
                 "consumes": [
                     "application/json"
                 ],
@@ -666,7 +666,7 @@
         },
         "/sync-jobs/{id}/explore/export": {
             "post": {
-                "description": "Downloads matching source or destination rows as CSV.",
+                "description": "Downloads matching source or destination rows as CSV. Optional filters match the explore preview.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1027,6 +1027,12 @@
                 "side"
             ],
             "properties": {
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sync.FilterInput"
+                    }
+                },
                 "side": {
                     "type": "string",
                     "example": "source"
@@ -1039,6 +1045,12 @@
                 "side"
             ],
             "properties": {
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sync.FilterInput"
+                    }
+                },
                 "page": {
                     "type": "integer",
                     "example": 1
@@ -1375,6 +1387,20 @@
                 },
                 "sync_job_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "sync.FilterInput": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
                 }
             }
         },

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { parsePage } from '../api/pagination'
+import { parsePage, parsePageSize } from '../api/pagination'
 import { listSyncLogs } from '../api/syncLogs'
 import StatusBadge from '../components/StatusBadge'
 import SyncProgress from '../components/SyncProgress'
@@ -21,7 +21,7 @@ import {
 } from '../components/ui'
 import { formatDate, formatDuration } from '../lib/format'
 
-const PAGE_SIZE = 20
+const PAGE_SIZE_OPTIONS = [10, 20, 50]
 
 function RefreshIcon({ spinning }) {
   return (
@@ -50,10 +50,11 @@ function RefreshIcon({ spinning }) {
   )
 }
 
-function buildParams({ syncJobId, page }) {
+function buildParams({ syncJobId, page, pageSize }) {
   const next = {}
   if (syncJobId) next.sync_job_id = syncJobId
   if (page > 1) next.page = String(page)
+  if (pageSize !== 20) next.page_size = String(pageSize)
   return next
 }
 
@@ -61,6 +62,7 @@ export default function SyncLogsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const filterJobId = searchParams.get('sync_job_id') || ''
   const page = parsePage(searchParams.get('page'))
+  const pageSize = parsePageSize(searchParams.get('page_size'), { options: PAGE_SIZE_OPTIONS })
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(0)
@@ -83,16 +85,17 @@ export default function SyncLogsPage() {
       const data = await listSyncLogs({
         syncJobId: filterJobId || undefined,
         page,
-        pageSize: PAGE_SIZE,
+        pageSize,
       })
       if (requestId.current !== id) return
       setItems(data?.items || [])
       setTotal(data?.total ?? 0)
       setTotalPages(data?.total_pages ?? 0)
       if (data?.total_pages > 0 && page > data.total_pages) {
-        setSearchParams(buildParams({ syncJobId: filterJobId, page: data.total_pages }), {
-          replace: true,
-        })
+        setSearchParams(
+          buildParams({ syncJobId: filterJobId, page: data.total_pages, pageSize }),
+          { replace: true },
+        )
       }
     } catch (err) {
       if (requestId.current !== id) return
@@ -103,7 +106,7 @@ export default function SyncLogsPage() {
         setRefreshing(false)
       }
     }
-  }, [filterJobId, page, setSearchParams])
+  }, [filterJobId, page, pageSize, setSearchParams])
 
   useEffect(() => {
     load()
@@ -112,11 +115,15 @@ export default function SyncLogsPage() {
   function applyFilter(event) {
     event.preventDefault()
     const next = draftFilter.trim()
-    setSearchParams(buildParams({ syncJobId: next, page: 1 }))
+    setSearchParams(buildParams({ syncJobId: next, page: 1, pageSize }))
   }
 
   function setPage(next) {
-    setSearchParams(buildParams({ syncJobId: filterJobId, page: next }))
+    setSearchParams(buildParams({ syncJobId: filterJobId, page: next, pageSize }))
+  }
+
+  function setPageSize(next) {
+    setSearchParams(buildParams({ syncJobId: filterJobId, page: 1, pageSize: next }))
   }
 
   return (
@@ -157,7 +164,7 @@ export default function SyncLogsPage() {
             type="button"
             onClick={() => {
               setDraftFilter('')
-              setSearchParams({})
+              setSearchParams(buildParams({ page: 1, pageSize }))
             }}
           >
             Clear
@@ -185,8 +192,10 @@ export default function SyncLogsPage() {
               page={page}
               totalPages={totalPages}
               total={total}
-              pageSize={PAGE_SIZE}
+              pageSize={pageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
               onPageChange={setPage}
+              onPageSizeChange={setPageSize}
               disabled={loading || refreshing}
             />
           }

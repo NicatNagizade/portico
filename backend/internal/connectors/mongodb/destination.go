@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/portico/backend/internal/connectors"
+	"github.com/portico/backend/internal/connectors/docutil"
 	"github.com/portico/backend/internal/models"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -162,12 +163,23 @@ func normalizeID(v any) any {
 	}
 }
 
-func (d *Destination) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+func (d *Destination) Query(ctx context.Context, name string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
+	}
+
+	if len(filters) > 0 {
+		docs, err := d.loadDocs(ctx, name)
+		if err != nil {
+			return nil, 0, err
+		}
+		docs = docutil.FilterRows(docs, filters)
+		total := int64(len(docs))
+		docutil.SortRows(docs, order)
+		return docutil.PageRows(docs, limit, offset), total, nil
 	}
 
 	coll := d.db.Collection(name)
@@ -207,6 +219,27 @@ func (d *Destination) Query(ctx context.Context, name string, limit, offset int,
 		return nil, 0, fmt.Errorf("mongodb cursor: %w", err)
 	}
 	return rows, total, nil
+}
+
+func (d *Destination) loadDocs(ctx context.Context, name string) ([]map[string]any, error) {
+	cur, err := d.db.Collection(name).Find(ctx, bson.D{})
+	if err != nil {
+		return nil, fmt.Errorf("mongodb find %q: %w", name, err)
+	}
+	defer cur.Close(ctx)
+
+	rows := []map[string]any{}
+	for cur.Next(ctx) {
+		var raw bson.M
+		if err := cur.Decode(&raw); err != nil {
+			return nil, fmt.Errorf("mongodb decode: %w", err)
+		}
+		rows = append(rows, DocFromRead(bsonMToMap(raw)))
+	}
+	if err := cur.Err(); err != nil {
+		return nil, fmt.Errorf("mongodb cursor: %w", err)
+	}
+	return rows, nil
 }
 
 func bsonMToMap(m bson.M) map[string]any {

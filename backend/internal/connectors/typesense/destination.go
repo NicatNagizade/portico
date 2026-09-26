@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/portico/backend/internal/connectors"
+	"github.com/portico/backend/internal/connectors/docutil"
 	"github.com/portico/backend/internal/models"
 	"github.com/typesense/typesense-go/v2/typesense"
 	"github.com/typesense/typesense-go/v2/typesense/api"
@@ -243,12 +244,25 @@ func toInt64(v any) (int64, bool) {
 }
 
 // Query reads documents from a Typesense collection (paginated). Used by explore.
-func (d *Destination) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+func (d *Destination) Query(ctx context.Context, name string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
+	}
+
+	// Operators Typesense cannot express (like / is_null / …) fall back to a full scan.
+	filterBy, ok := BuildFilterBy(filters)
+	if len(filters) > 0 && !ok {
+		docs, err := loadAll(ctx, d.client, name)
+		if err != nil {
+			return nil, 0, err
+		}
+		docs = docutil.FilterRows(docs, filters)
+		total := int64(len(docs))
+		docutil.SortRows(docs, order)
+		return docutil.PageRows(docs, limit, offset), total, nil
 	}
 
 	coll, err := d.client.Collection(name).Retrieve(ctx)
@@ -265,6 +279,9 @@ func (d *Destination) Query(ctx context.Context, name string, limit, offset int,
 		QueryBy: pointer.String(queryBy),
 		Page:    pointer.Int(offset/limit + 1),
 		PerPage: pointer.Int(limit),
+	}
+	if filterBy != "" {
+		params.FilterBy = pointer.String(filterBy)
 	}
 	// Non-schema fields (rare) fall back to in-memory sort for the current page.
 	var localSort *connectors.Order

@@ -955,7 +955,7 @@ func (m *mockDest) WriteBatch(ctx context.Context, name string, docs []map[strin
 	}
 	return nil
 }
-func (m *mockDest) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+func (m *mockDest) Query(ctx context.Context, name string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	docs := m.docs
@@ -966,11 +966,21 @@ func (m *mockDest) Query(ctx context.Context, name string, limit, offset int, or
 		}
 		docs = flat
 	}
-	total := int64(len(docs))
-	ordered := docs
+	var filtered []map[string]any
+	for _, row := range docs {
+		if matchFilters(row, filters) {
+			copied := make(map[string]any, len(row))
+			for k, v := range row {
+				copied[k] = v
+			}
+			filtered = append(filtered, copied)
+		}
+	}
+	total := int64(len(filtered))
+	ordered := filtered
 	if order != nil && order.Column != "" {
-		ordered = make([]map[string]any, len(docs))
-		copy(ordered, docs)
+		ordered = make([]map[string]any, len(filtered))
+		copy(ordered, filtered)
 		col := order.Column
 		sort.SliceStable(ordered, func(i, j int) bool {
 			a := fmt.Sprint(ordered[i][col])
@@ -2121,6 +2131,50 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 		if preview.Columns[i] != c {
 			t.Fatalf("expected columns %v, got %v", wantCols, preview.Columns)
 		}
+	}
+
+	filterBody, _ := json.Marshal(map[string]any{
+		"side":      "source",
+		"page":      1,
+		"page_size": 10,
+		"filters": []map[string]any{
+			{"field": "full_name", "operator": "eq", "value": "c"},
+		},
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(filterBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 1 || len(preview.Rows) != 1 || fmt.Sprint(preview.Rows[0]["full_name"]) != "c" {
+		t.Fatalf("expected 1 filtered row full_name=c, got total=%d rows=%#v", preview.Total, preview.Rows)
+	}
+
+	destFilterBody, _ := json.Marshal(map[string]any{
+		"side":      "destination",
+		"page":      1,
+		"page_size": 10,
+		"filters": []map[string]any{
+			{"field": "full_name", "operator": "eq", "value": "a"},
+		},
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(destFilterBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore dest filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 1 || len(preview.Rows) != 1 || fmt.Sprint(preview.Rows[0]["full_name"]) != "a" {
+		t.Fatalf("expected 1 dest filtered row, got total=%d rows=%#v", preview.Total, preview.Rows)
 	}
 
 	sortBody, _ := json.Marshal(map[string]any{

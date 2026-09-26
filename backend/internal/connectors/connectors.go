@@ -66,7 +66,7 @@ type DestinationWriter interface {
 // DestinationReader reads documents already stored in a destination (explore / export).
 type DestinationReader interface {
 	Open(ctx context.Context) error
-	Query(ctx context.Context, name string, limit, offset int, order *Order) (rows []map[string]any, total int64, err error)
+	Query(ctx context.Context, name string, filters []Filter, limit, offset int, order *Order) (rows []map[string]any, total int64, err error)
 	Close() error
 }
 

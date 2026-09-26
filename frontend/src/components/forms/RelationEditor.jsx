@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { RELATION_TYPES } from '../../lib/relationTypes'
 import { columnNames, fieldsFromSourceColumns } from '../../lib/sourceColumns'
 import AutocompleteInput from '../AutocompleteInput'
-import { GhostButton, IconButton, MetaChip, SecondaryButton } from '../ui'
+import { GhostButton, IconButton, MetaChip, SecondaryButton, Toggle } from '../ui'
 import FieldEditor from './FieldEditor'
 
 const compactInput =
@@ -111,6 +111,9 @@ function RelationCard({
   const fieldCount = countOwnFields(row)
   const children = row.relations || []
   const label = row.name.trim() || 'Untitled relation'
+  const [customKeys, setCustomKeys] = useState(
+    () => Boolean(row.foreign_key?.trim() || row.related_key?.trim()),
+  )
 
   function toggleExpanded() {
     const key = String(row.id)
@@ -236,37 +239,50 @@ function RelationCard({
                   />
                 </label>
               )}
-              <label className="block text-xs">
-                <span className="mb-1 block text-[var(--text-muted)]">Foreign key</span>
-                <AutocompleteInput
-                  className={compactInput}
-                  options={columnNames(fkColumns)}
-                  value={row.foreign_key || ''}
-                  onFocus={() => fkTable && onNeedColumns?.(fkTable)}
-                  onChange={(e) => patch({ foreign_key: e.target.value })}
-                  placeholder="auto"
-                />
-              </label>
-              <label className="block text-xs">
-                <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
-                <AutocompleteInput
-                  className={compactInput}
-                  options={columnNames(rkColumns)}
-                  value={row.related_key || ''}
-                  onFocus={() => rkTable && onNeedColumns?.(rkTable)}
-                  onChange={(e) => patch({ related_key: e.target.value })}
-                  placeholder="auto"
-                />
-              </label>
-              <label className="flex items-end gap-2 pb-1.5 text-sm">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-[var(--accent)]"
-                  checked={row.active !== false}
-                  onChange={(e) => patch({ active: e.target.checked })}
-                />
-                Active
-              </label>
+            </div>
+
+            <div className="space-y-3">
+              <Toggle
+                checked={row.active !== false}
+                onChange={(on) => patch({ active: on })}
+                label="Active"
+                description="Inactive relations are skipped during sync."
+              />
+              <Toggle
+                checked={customKeys}
+                onChange={(on) => {
+                  setCustomKeys(on)
+                  if (!on) patch({ foreign_key: '', related_key: '' })
+                }}
+                label="Custom foreign / related keys"
+                description="Leave off to infer keys from the relation name."
+              />
+              {customKeys ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-xs">
+                    <span className="mb-1 block text-[var(--text-muted)]">Foreign key</span>
+                    <AutocompleteInput
+                      className={compactInput}
+                      options={columnNames(fkColumns)}
+                      value={row.foreign_key || ''}
+                      onFocus={() => fkTable && onNeedColumns?.(fkTable)}
+                      onChange={(e) => patch({ foreign_key: e.target.value })}
+                      placeholder="auto"
+                    />
+                  </label>
+                  <label className="block text-xs">
+                    <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
+                    <AutocompleteInput
+                      className={compactInput}
+                      options={columnNames(rkColumns)}
+                      value={row.related_key || ''}
+                      onFocus={() => rkTable && onNeedColumns?.(rkTable)}
+                      onChange={(e) => patch({ related_key: e.target.value })}
+                      placeholder="auto"
+                    />
+                  </label>
+                </div>
+              ) : null}
             </div>
 
             <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)]/70 p-3">
@@ -330,6 +346,7 @@ export default function RelationEditor({
   sourceTable = '',
   onNeedTables,
   onNeedColumns,
+  hideHeader = false,
 }) {
   const [expanded, setExpanded] = useState(() => new Set())
 
@@ -355,18 +372,25 @@ export default function RelationEditor({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2">
-          <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
-            05
-          </span>
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--text)]">Relations</h3>
-            <p className="text-xs text-[var(--text-muted)]">
-              Nested related rows on the destination document. Nest children under a relation.
-            </p>
+      <div
+        className={[
+          'flex items-start gap-3',
+          hideHeader ? 'justify-end' : 'justify-between',
+        ].join(' ')}
+      >
+        {hideHeader ? null : (
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
+              05
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--text)]">Relations</h3>
+              <p className="text-xs text-[var(--text-muted)]">
+                Nested related rows on the destination document. Nest children under a relation.
+              </p>
+            </div>
           </div>
-        </div>
+        )}
         <SecondaryButton type="button" onClick={addRelation}>
           Add relation
         </SecondaryButton>

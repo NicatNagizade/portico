@@ -4,10 +4,13 @@ import { ruleNeedsValue } from '../../lib/ruleOperators'
 import { columnNames, fieldsFromSourceColumns } from '../../lib/sourceColumns'
 import useConnectionSchema from '../../hooks/useConnectionSchema'
 import AutocompleteInput from '../AutocompleteInput'
-import { Field, PrimaryButton, inputClassName } from '../ui'
+import { Field, IconButton, PrimaryButton, Toggle, inputClassName } from '../ui'
 import FieldEditor from './FieldEditor'
 import RelationEditor from './RelationEditor'
 import RuleEditor from './RuleEditor'
+
+const DEFAULT_CHUNK_SIZE = 500
+const DEFAULT_WORKERS = 2
 
 function toArrayCsv(value) {
   if (Array.isArray(value)) return value.join(', ')
@@ -141,6 +144,80 @@ function keepRelations(relations) {
     }))
 }
 
+function ChevronToggleIcon({ open }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className={`transition-transform ${open ? 'rotate-180' : ''}`}
+    >
+      <path
+        d="M6 9l6 6 6-6"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function ButtonPanel({ title, description, open, onToggle, children, className = '' }) {
+  return (
+    <div
+      className={[
+        'rounded-lg border border-[var(--border)] bg-[var(--surface)]/60 p-4',
+        className,
+      ].join(' ')}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h4 className="text-sm font-semibold text-[var(--text)]">{title}</h4>
+          {description ? (
+            <p className="text-xs text-[var(--text-muted)]">{description}</p>
+          ) : null}
+        </div>
+        <IconButton
+          label={open ? `Hide ${title}` : `Show ${title}`}
+          onClick={() => onToggle(!open)}
+        >
+          <ChevronToggleIcon open={open} />
+        </IconButton>
+      </div>
+      {open ? <div className="mt-4 border-t border-[var(--border)] pt-4">{children}</div> : null}
+    </div>
+  )
+}
+
+function AdvancedSettings({ open, onToggle, summary, children }) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-[var(--text)]">Advanced settings</h3>
+          <p className="text-xs text-[var(--text-muted)]">
+            {open
+              ? 'Destination config, filters, field overrides, and relations.'
+              : summary || 'Destination config, filters, field overrides, and relations.'}
+          </p>
+        </div>
+        <IconButton
+          label={open ? 'Hide advanced settings' : 'Show advanced settings'}
+          onClick={() => onToggle(!open)}
+        >
+          <ChevronToggleIcon open={open} />
+        </IconButton>
+      </div>
+      {open ? (
+        <div className="mt-4 space-y-3 border-t border-[var(--border)] pt-4">{children}</div>
+      ) : null}
+    </div>
+  )
+}
+
 export default function SyncJobForm({
   initial,
   connections = [],
@@ -157,14 +234,46 @@ export default function SyncJobForm({
   )
   const [sourceTable, setSourceTable] = useState(initial?.source_table || '')
   const [destinationTable, setDestinationTable] = useState(initial?.destination_table || '')
-  const [chunkSize, setChunkSize] = useState(initial?.chunk_size ?? 500)
-  const [workers, setWorkers] = useState(initial?.workers ?? 2)
+  const [chunkSize, setChunkSize] = useState(initial?.chunk_size ?? DEFAULT_CHUNK_SIZE)
+  const [workers, setWorkers] = useState(initial?.workers ?? DEFAULT_WORKERS)
   const [config, setConfig] = useState(() => buildInitialConfig(initial?.config))
   const [fields, setFields] = useState(() => (initial?.fields || []).map(mapField))
   const [rules, setRules] = useState(() => (initial?.rules || []).map(mapRule))
   const [relations, setRelations] = useState(() =>
     (initial?.relations || []).map(mapRelation),
   )
+
+  const initialConfig = parseConfig(initial?.config)
+  const [showAdvanced, setShowAdvanced] = useState(
+    () =>
+      (initial?.rules || []).length > 0 ||
+      (initial?.fields || []).length > 0 ||
+      (initial?.relations || []).length > 0 ||
+      Boolean(initialConfig.default_sorting_field) ||
+      (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length > 0) ||
+      (Array.isArray(initialConfig.token_separators) && initialConfig.token_separators.length > 0),
+  )
+  const [showDestConfig, setShowDestConfig] = useState(
+    () =>
+      Boolean(initialConfig.default_sorting_field) ||
+      (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length > 0) ||
+      (Array.isArray(initialConfig.token_separators) && initialConfig.token_separators.length > 0) ||
+      initialConfig.enable_nested_fields === false,
+  )
+  const [showRules, setShowRules] = useState(() => (initial?.rules || []).length > 0)
+  const [showFields, setShowFields] = useState(() => (initial?.fields || []).length > 0)
+  const [showRelations, setShowRelations] = useState(() => (initial?.relations || []).length > 0)
+  const [showTypesenseAdvanced, setShowTypesenseAdvanced] = useState(() => {
+    return Boolean(
+      (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length) ||
+        (typeof initialConfig.symbols_to_index === 'string' &&
+          initialConfig.symbols_to_index.trim()) ||
+        (Array.isArray(initialConfig.token_separators) &&
+          initialConfig.token_separators.length) ||
+        (typeof initialConfig.token_separators === 'string' &&
+          initialConfig.token_separators.trim()),
+    )
+  })
 
   const { tables, columnsByTable, ensureTables, ensureColumns } =
     useConnectionSchema(sourceConnectionId)
@@ -179,6 +288,18 @@ export default function SyncJobForm({
 
   const sourceColumns = columnsByTable[sourceTable.trim()] || []
   const sourceColumnNames = columnNames(sourceColumns)
+
+  const mappingSummary = useMemo(() => {
+    const parts = []
+    const ruleCount = rules.filter((r) => r.field.trim()).length
+    const fieldCount = fields.filter((f) => f.source_name.trim()).length
+    const relationCount = relations.filter((r) => r.name.trim() && r.table.trim()).length
+    if (destinationType === 'typesense') parts.push('destination config')
+    if (ruleCount) parts.push(`${ruleCount} rule${ruleCount === 1 ? '' : 's'}`)
+    if (fieldCount) parts.push(`${fieldCount} field${fieldCount === 1 ? '' : 's'}`)
+    if (relationCount) parts.push(`${relationCount} relation${relationCount === 1 ? '' : 's'}`)
+    return parts.length ? parts.join(', ') : ''
+  }, [rules, fields, relations, destinationType])
 
   async function autofillFields() {
     const columns = await ensureColumns(sourceTable)
@@ -195,10 +316,12 @@ export default function SyncJobForm({
         payloadConfig.default_sorting_field = config.default_sorting_field.trim()
       }
       payloadConfig.enable_nested_fields = config.enable_nested_fields
-      const symbols = fromCsv(config.symbols_to_index)
-      const tokens = fromCsv(config.token_separators)
-      if (symbols.length) payloadConfig.symbols_to_index = symbols
-      if (tokens.length) payloadConfig.token_separators = tokens
+      if (showTypesenseAdvanced) {
+        const symbols = fromCsv(config.symbols_to_index)
+        const tokens = fromCsv(config.token_separators)
+        if (symbols.length) payloadConfig.symbols_to_index = symbols
+        if (tokens.length) payloadConfig.token_separators = tokens
+      }
     }
 
     const keptRelations = keepRelations(relations)
@@ -224,8 +347,8 @@ export default function SyncJobForm({
       source_table: sourceTable.trim(),
       destination_connection_id: Number(destinationConnectionId),
       destination_table: destinationTable.trim(),
-      chunk_size: Number(chunkSize) || 500,
-      workers: Number(workers) || 2,
+      chunk_size: Number(chunkSize) || DEFAULT_CHUNK_SIZE,
+      workers: Number(workers) || DEFAULT_WORKERS,
       config: payloadConfig,
       fields: fieldPayloadList,
       rules: rulePayload,
@@ -326,102 +449,128 @@ export default function SyncJobForm({
         </div>
       </div>
 
-      {destinationType === 'typesense' ? (
-        <details className="group rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 open:pb-4">
-          <summary className="flex cursor-pointer list-none items-center gap-2 p-4 [&::-webkit-details-marker]:hidden">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
-              02
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold text-[var(--text)]">Destination config</h3>
-              <p className="text-xs text-[var(--text-muted)]">
-                Optional Typesense options — expand only if you need them.
-              </p>
-            </div>
-            <span className="font-mono text-[11px] text-[var(--text-muted)] group-open:hidden">
-              show
-            </span>
-            <span className="hidden font-mono text-[11px] text-[var(--text-muted)] group-open:inline">
-              hide
-            </span>
-          </summary>
-          <div className="grid gap-4 border-t border-[var(--border)] px-4 pt-4 sm:grid-cols-2">
-            <Field
-              label="Default sorting field"
-              hint="int32/float/int64 — id uses id_int"
-            >
-              <AutocompleteInput
-                options={sourceColumnNames}
-                value={config.default_sorting_field}
-                onFocus={() => ensureColumns(sourceTable)}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, default_sorting_field: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Symbols to index" hint="Comma-separated">
-              <input
-                className={inputClassName}
-                value={config.symbols_to_index}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, symbols_to_index: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Token separators" hint="Comma-separated">
-              <input
-                className={inputClassName}
-                value={config.token_separators}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, token_separators: e.target.value }))
-                }
-              />
-            </Field>
-            <label className="flex items-center gap-2 pt-7 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-[var(--accent)]"
+      <AdvancedSettings
+        open={showAdvanced}
+        onToggle={setShowAdvanced}
+        summary={mappingSummary}
+      >
+        {destinationType === 'typesense' ? (
+          <ButtonPanel
+            title="Destination config"
+            description="Optional Typesense options."
+            open={showDestConfig}
+            onToggle={setShowDestConfig}
+          >
+            <div className="space-y-4">
+              <Field
+                label="Default sorting field"
+                hint="int32/float/int64 — id uses id_int"
+              >
+                <AutocompleteInput
+                  options={sourceColumnNames}
+                  value={config.default_sorting_field}
+                  onFocus={() => ensureColumns(sourceTable)}
+                  onChange={(e) =>
+                    setConfig((prev) => ({ ...prev, default_sorting_field: e.target.value }))
+                  }
+                />
+              </Field>
+              <Toggle
                 checked={config.enable_nested_fields}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, enable_nested_fields: e.target.checked }))
-                }
+                onChange={(on) => setConfig((prev) => ({ ...prev, enable_nested_fields: on }))}
+                label="Enable nested fields"
+                description="Keep nested objects and arrays in the Typesense schema."
               />
-              Enable nested fields
-            </label>
-          </div>
-        </details>
-      ) : null}
+              <Toggle
+                checked={showTypesenseAdvanced}
+                onChange={(on) => {
+                  setShowTypesenseAdvanced(on)
+                  if (!on) {
+                    setConfig((prev) => ({
+                      ...prev,
+                      symbols_to_index: '',
+                      token_separators: '',
+                    }))
+                  }
+                }}
+                label="Custom indexing symbols"
+                description="Override symbols to index and token separators."
+              />
+              {showTypesenseAdvanced ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Symbols to index" hint="Comma-separated">
+                    <input
+                      className={inputClassName}
+                      value={config.symbols_to_index}
+                      onChange={(e) =>
+                        setConfig((prev) => ({ ...prev, symbols_to_index: e.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Token separators" hint="Comma-separated">
+                    <input
+                      className={inputClassName}
+                      value={config.token_separators}
+                      onChange={(e) =>
+                        setConfig((prev) => ({ ...prev, token_separators: e.target.value }))
+                      }
+                    />
+                  </Field>
+                </div>
+              ) : null}
+            </div>
+          </ButtonPanel>
+        ) : null}
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <RuleEditor
-          rules={rules}
-          onChange={setRules}
-          sourceColumns={sourceColumnNames}
-          onNeedSourceColumns={() => ensureColumns(sourceTable)}
-        />
-      </div>
+        <ButtonPanel
+          title="Filter rules"
+          description="Only import rows that match all active rules."
+          open={showRules}
+          onToggle={setShowRules}
+        >
+          <RuleEditor
+            rules={rules}
+            onChange={setRules}
+            sourceColumns={sourceColumnNames}
+            onNeedSourceColumns={() => ensureColumns(sourceTable)}
+            hideHeader
+          />
+        </ButtonPanel>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <FieldEditor
-          fields={fields}
-          onChange={setFields}
-          sourceColumns={sourceColumns}
-          onNeedSourceColumns={() => ensureColumns(sourceTable)}
-          onAutofill={sourceTable.trim() ? autofillFields : undefined}
-        />
-      </div>
+        <ButtonPanel
+          title="Field overrides"
+          description="Rename columns, set types, map values, or exclude fields."
+          open={showFields}
+          onToggle={setShowFields}
+        >
+          <FieldEditor
+            fields={fields}
+            onChange={setFields}
+            sourceColumns={sourceColumns}
+            onNeedSourceColumns={() => ensureColumns(sourceTable)}
+            onAutofill={sourceTable.trim() ? autofillFields : undefined}
+            hideHeader
+          />
+        </ButtonPanel>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <RelationEditor
-          relations={relations}
-          onChange={setRelations}
-          tables={tables}
-          columnsByTable={columnsByTable}
-          sourceTable={sourceTable}
-          onNeedTables={ensureTables}
-          onNeedColumns={ensureColumns}
-        />
-      </div>
+        <ButtonPanel
+          title="Relations"
+          description="Nest related rows on the destination document."
+          open={showRelations}
+          onToggle={setShowRelations}
+        >
+          <RelationEditor
+            relations={relations}
+            onChange={setRelations}
+            tables={tables}
+            columnsByTable={columnsByTable}
+            sourceTable={sourceTable}
+            onNeedTables={ensureTables}
+            onNeedColumns={ensureColumns}
+            hideHeader
+          />
+        </ButtonPanel>
+      </AdvancedSettings>
 
       <div className="flex justify-end border-t border-[var(--border)] pt-5">
         <PrimaryButton type="submit" disabled={busy}>

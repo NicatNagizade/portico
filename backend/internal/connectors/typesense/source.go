@@ -119,15 +119,20 @@ func mapTypesenseType(t string) connectors.FieldType {
 }
 
 func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
-	docs, err := s.loadAll(ctx, table)
-	if err != nil {
-		return 0, err
+	filterBy, ok := BuildFilterBy(filters)
+	if len(filters) > 0 && !ok {
+		docs, err := loadAll(ctx, s.client, table)
+		if err != nil {
+			return 0, err
+		}
+		return int64(len(docutil.FilterRows(docs, filters))), nil
 	}
-	return int64(len(docutil.FilterRows(docs, filters))), nil
+	_, total, err := searchPage(ctx, s.client, table, filterBy, 1, 0)
+	return total, err
 }
 
 func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
-	docs, err := s.loadAll(ctx, table)
+	docs, err := loadAll(ctx, s.client, table)
 	if err != nil {
 		return err
 	}
@@ -135,13 +140,22 @@ func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, fi
 }
 
 func (s *Source) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
-	docs, err := s.loadAll(ctx, table)
+	filterBy, ok := BuildFilterBy(filters)
+	// Full scan when filters can't be pushed, or when sorting (needs global order before page).
+	if order != nil || (len(filters) > 0 && !ok) {
+		docs, err := loadAll(ctx, s.client, table)
+		if err != nil {
+			return nil, err
+		}
+		docs = docutil.FilterRows(docs, filters)
+		docutil.SortRows(docs, order)
+		docs = docutil.PageRows(docs, limit, offset)
+		return docutil.SelectColumns(docs, columns), nil
+	}
+	docs, _, err := searchPage(ctx, s.client, table, filterBy, limit, offset)
 	if err != nil {
 		return nil, err
 	}
-	docs = docutil.FilterRows(docs, filters)
-	docutil.SortRows(docs, order)
-	docs = docutil.PageRows(docs, limit, offset)
 	return docutil.SelectColumns(docs, columns), nil
 }
 
@@ -149,7 +163,7 @@ func (s *Source) QueryRows(ctx context.Context, table string, columns []string, 
 	if len(whereValues) == 0 {
 		return nil, nil
 	}
-	docs, err := s.loadAll(ctx, table)
+	docs, err := loadAll(ctx, s.client, table)
 	if err != nil {
 		return nil, err
 	}
@@ -166,8 +180,61 @@ func (s *Source) QueryRows(ctx context.Context, table string, columns []string, 
 	return docutil.SelectColumns(out, columns), nil
 }
 
-func (s *Source) loadAll(ctx context.Context, table string) ([]map[string]any, error) {
-	coll, err := s.client.Collection(table).Retrieve(ctx)
+// searchPage runs q=* with optional filter_by and returns one page plus total found.
+func searchPage(ctx context.Context, client *typesense.Client, table, filterBy string, limit, offset int) ([]map[string]any, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	coll, err := client.Collection(table).Retrieve(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("typesense retrieve collection %q: %w", table, err)
+	}
+	queryBy := searchableQueryBy(coll.Fields)
+	if queryBy == "" {
+		return []map[string]any{}, 0, nil
+	}
+	params := &api.SearchCollectionParams{
+		Q:       pointer.String("*"),
+		QueryBy: pointer.String(queryBy),
+		Page:    pointer.Int(offset/limit + 1),
+		PerPage: pointer.Int(limit),
+	}
+	if filterBy != "" {
+		params.FilterBy = pointer.String(filterBy)
+	}
+	result, err := client.Collection(table).Documents().Search(ctx, params)
+	if err != nil {
+		return nil, 0, fmt.Errorf("typesense search %q: %w", table, err)
+	}
+	var total int64
+	if result.Found != nil {
+		total = int64(*result.Found)
+	}
+	rows := []map[string]any{}
+	if result.Hits == nil {
+		return rows, total, nil
+	}
+	for _, hit := range *result.Hits {
+		if hit.Document == nil {
+			continue
+		}
+		doc := make(map[string]any, len(*hit.Document))
+		for k, v := range *hit.Document {
+			if k == SortableIDField {
+				continue
+			}
+			doc[k] = v
+		}
+		rows = append(rows, doc)
+	}
+	return rows, total, nil
+}
+
+func loadAll(ctx context.Context, client *typesense.Client, table string) ([]map[string]any, error) {
+	coll, err := client.Collection(table).Retrieve(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("typesense retrieve collection %q: %w", table, err)
 	}
@@ -188,7 +255,7 @@ func (s *Source) loadAll(ctx context.Context, table string) ([]map[string]any, e
 			Page:    pointer.Int(page),
 			PerPage: pointer.Int(perPage),
 		}
-		result, err := s.client.Collection(table).Documents().Search(ctx, params)
+		result, err := client.Collection(table).Documents().Search(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("typesense search %q: %w", table, err)
 		}

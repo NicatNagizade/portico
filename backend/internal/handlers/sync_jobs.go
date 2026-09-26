@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/portico/backend/internal/pagination"
+	"github.com/portico/backend/internal/services/sync"
 	"github.com/portico/backend/internal/services/syncjob"
 )
 
@@ -184,20 +185,22 @@ func (h *Handlers) StartSyncJob(c *gin.Context) {
 }
 
 type ExploreRequest struct {
-	Side     string `json:"side" binding:"required" example:"source"`
-	Page     int    `json:"page" example:"1"`
-	PageSize int    `json:"page_size" example:"50"`
-	SortBy   string `json:"sort_by" example:"id"`
-	SortDir  string `json:"sort_dir" example:"asc"`
+	Side     string              `json:"side" binding:"required" example:"source"`
+	Page     int                 `json:"page" example:"1"`
+	PageSize int                 `json:"page_size" example:"50"`
+	SortBy   string              `json:"sort_by" example:"id"`
+	SortDir  string              `json:"sort_dir" example:"asc"`
+	Filters  []sync.FilterInput  `json:"filters"`
 }
 
 type ExploreExportRequest struct {
-	Side string `json:"side" binding:"required" example:"source"`
+	Side    string             `json:"side" binding:"required" example:"source"`
+	Filters []sync.FilterInput `json:"filters"`
 }
 
 // ExploreSyncJob godoc
 // @Summary Explore sync job data
-// @Description Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job.
+// @Description Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job. Optional filters are AND'd (with job rules on source).
 // @Tags sync-jobs
 // @Accept json
 // @Produce json
@@ -218,7 +221,7 @@ func (h *Handlers) ExploreSyncJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid json body"})
 		return
 	}
-	result, err := h.Sync.Preview(c.Request.Context(), id, req.Side, req.Page, req.PageSize, req.SortBy, req.SortDir)
+	result, err := h.Sync.Preview(c.Request.Context(), id, req.Side, req.Page, req.PageSize, req.SortBy, req.SortDir, req.Filters)
 	if err != nil {
 		writeErr(c, err, nil)
 		return
@@ -228,7 +231,7 @@ func (h *Handlers) ExploreSyncJob(c *gin.Context) {
 
 // ExportSyncJobExplore godoc
 // @Summary Export sync job explore data as CSV
-// @Description Downloads matching source or destination rows as CSV.
+// @Description Downloads matching source or destination rows as CSV. Optional filters match the explore preview.
 // @Tags sync-jobs
 // @Accept json
 // @Produce text/csv
@@ -250,7 +253,7 @@ func (h *Handlers) ExportSyncJobExplore(c *gin.Context) {
 		return
 	}
 	var buf bytes.Buffer
-	filename, err := h.Sync.ExportCSV(c.Request.Context(), id, req.Side, &buf)
+	filename, err := h.Sync.ExportCSV(c.Request.Context(), id, req.Side, &buf, req.Filters)
 	if err != nil {
 		writeErr(c, err, nil)
 		return

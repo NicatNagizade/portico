@@ -11,10 +11,11 @@ Task playbooks for common work on this repo. Read `AGENTS.md` for project rules;
 **When:** adding, moving, or updating tests.
 
 - Backend: `backend/tests/` only (`make test` → `go test ./tests/...`).
-- Frontend: `frontend/tests/` only.
+- Frontend: Playwright in `frontend/tests/` only (`make test-frontend` → `npm test`).
 - Never put `*_test.go` / test files next to source packages.
 - Prefer extending existing API tests in `backend/tests/api_test.go` over new frameworks.
 - After API shape changes, cover the happy path and one failure case if cheap.
+- First-time Playwright browsers: `cd frontend && npx playwright install chromium`.
 
 ---
 

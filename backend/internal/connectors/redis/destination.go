@@ -80,11 +80,12 @@ func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[st
 	return nil
 }
 
-func (d *Destination) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+func (d *Destination) Query(ctx context.Context, name string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
 	docs, err := loadTableDocs(ctx, d.client, d.cfg, name)
 	if err != nil {
 		return nil, 0, err
 	}
+	docs = docutil.FilterRows(docs, filters)
 	total := int64(len(docs))
 	docutil.SortRows(docs, order)
 	return docutil.PageRows(docs, limit, offset), total, nil

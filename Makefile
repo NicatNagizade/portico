@@ -1,5 +1,5 @@
 .PHONY: help setup setup-backend setup-frontend \
-	api frontend test build tidy swagger lint preview \
+	api frontend test test-frontend build tidy swagger lint preview \
 	migrate-refresh import-connections example-migrate example-seed
 
 BACKEND := backend
@@ -28,6 +28,9 @@ frontend: ## Run the Vite dev server (:5173)
 
 test: ## Run backend tests (requires CGO)
 	cd $(BACKEND) && CGO_ENABLED=1 go test ./tests/...
+
+test-frontend: ## Run Playwright frontend tests
+	cd $(FRONTEND) && npm test
 
 build: ## Build frontend for production
 	cd $(FRONTEND) && npm run build

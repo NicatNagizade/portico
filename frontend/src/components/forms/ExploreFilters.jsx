@@ -1,18 +1,12 @@
 import { RULE_OPERATORS, ruleNeedsValue } from '../../lib/ruleOperators'
 import AutocompleteInput from '../AutocompleteInput'
-import { IconButton, SecondaryButton, Toggle } from '../ui'
+import { IconButton, SecondaryButton } from '../ui'
 
 const compactInput =
   'w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-soft)]'
 
-function emptyRule() {
-  return {
-    id: undefined,
-    field: '',
-    operator: 'eq',
-    value: '',
-    active: true,
-  }
+function emptyExploreFilter() {
+  return { field: '', operator: 'eq', value: '' }
 }
 
 function TrashIcon() {
@@ -29,54 +23,43 @@ function TrashIcon() {
   )
 }
 
-export default function RuleEditor({
-  rules,
+/** Explore-time filter rows. Field input uses AutocompleteInput. */
+export default function ExploreFilters({
+  filters,
   onChange,
-  sourceColumns = [],
-  onNeedSourceColumns,
-  hideHeader = false,
+  fieldOptions = [],
+  onNeedFields,
 }) {
   function updateRow(index, patch) {
-    onChange(rules.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+    onChange(filters.map((row, i) => (i === index ? { ...row, ...patch } : row)))
   }
 
   function removeRow(index) {
-    onChange(rules.filter((_, i) => i !== index))
+    onChange(filters.filter((_, i) => i !== index))
   }
 
   return (
     <div className="space-y-3">
-      <div
-        className={[
-          'flex items-start gap-3',
-          hideHeader ? 'justify-end' : 'justify-between',
-        ].join(' ')}
-      >
-        {hideHeader ? null : (
-          <div className="flex items-start gap-2">
-            <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
-              03
-            </span>
-            <div>
-              <h3 className="text-sm font-semibold text-[var(--text)]">Filter rules</h3>
-              <p className="text-xs text-[var(--text-muted)]">
-                Only rows matching all active rules are imported. Example: client_id = 123.
-              </p>
-            </div>
-          </div>
-        )}
-        <SecondaryButton type="button" onClick={() => onChange([...rules, emptyRule()])}>
-          Add rule
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--text)]">Filters</h3>
+          <p className="text-xs text-[var(--text-muted)]">
+            Narrow the preview. All filters are AND’d
+            {fieldOptions.length ? ' · field names autocomplete from columns' : ''}.
+          </p>
+        </div>
+        <SecondaryButton type="button" onClick={() => onChange([...filters, emptyExploreFilter()])}>
+          Add filter
         </SecondaryButton>
       </div>
 
-      {rules.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-center text-sm text-[var(--text-muted)]">
-          No filters — all source rows are imported.
+      {filters.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-[var(--border)] px-3 py-3 text-center text-sm text-[var(--text-muted)]">
+          No extra filters — job rules still apply on source.
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-          <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[480px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-[var(--border)] bg-[var(--bg-elevated)]/80">
                 <th className="px-3 py-2 font-mono text-[10px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
@@ -88,26 +71,23 @@ export default function RuleEditor({
                 <th className="px-3 py-2 font-mono text-[10px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
                   Value
                 </th>
-                <th className="w-16 px-3 py-2 text-center font-mono text-[10px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
-                  On
-                </th>
                 <th className="w-10 px-2 py-2" />
               </tr>
             </thead>
             <tbody>
-              {rules.map((row, index) => {
+              {filters.map((row, index) => {
                 const needsValue = ruleNeedsValue(row.operator)
                 return (
-                  <tr key={row.id ?? `new-${index}`} className="border-b border-[var(--border)] last:border-b-0">
+                  <tr key={index} className="border-b border-[var(--border)] last:border-b-0">
                     <td className="px-3 py-2">
                       <AutocompleteInput
                         required
                         className={compactInput}
-                        options={sourceColumns}
+                        options={fieldOptions}
                         value={row.field}
-                        onFocus={onNeedSourceColumns}
+                        onFocus={onNeedFields}
                         onChange={(e) => updateRow(index, { field: e.target.value })}
-                        placeholder="client_id"
+                        placeholder="status"
                       />
                     </td>
                     <td className="px-3 py-2">
@@ -136,23 +116,21 @@ export default function RuleEditor({
                           className={compactInput}
                           value={row.value}
                           onChange={(e) => updateRow(index, { value: e.target.value })}
-                          placeholder={row.operator === 'in' || row.operator === 'not_in' ? 'a, b, c' : '123'}
+                          placeholder={
+                            row.operator === 'in' || row.operator === 'not_in' ? 'a, b, c' : '123'
+                          }
                         />
                       ) : (
                         <span className="font-mono text-xs text-[var(--text-muted)]">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-center align-middle">
-                      <div className="flex justify-center">
-                        <Toggle
-                          checked={row.active !== false}
-                          onChange={(on) => updateRow(index, { active: on })}
-                          aria-label="Active"
-                        />
-                      </div>
-                    </td>
                     <td className="px-2 py-2">
-                      <IconButton type="button" label="Remove rule" tone="danger" onClick={() => removeRow(index)}>
+                      <IconButton
+                        type="button"
+                        label="Remove filter"
+                        tone="danger"
+                        onClick={() => removeRow(index)}
+                      >
                         <TrashIcon />
                       </IconButton>
                     </td>

@@ -29,8 +29,16 @@ var (
 	ErrNotFound                   = errors.New("sync job not found")
 	ErrInvalidSide                = errors.New("side must be source or destination")
 	ErrInvalidSort                = errors.New("invalid sort field or direction")
+	ErrInvalidFilter              = errors.New("invalid explore filter")
 	ErrDestinationReadUnsupported = errors.New("destination does not support reading documents")
 )
+
+// FilterInput is an explore-time predicate (AND'd with job rules on source).
+type FilterInput struct {
+	Field    string `json:"field"`
+	Operator string `json:"operator"`
+	Value    string `json:"value"`
+}
 
 // PreviewResult is a page of explore rows for a sync job.
 type PreviewResult struct {
@@ -94,13 +102,17 @@ func (o *Orchestrator) loadJob(jobID uint) (*models.SyncJob, error) {
 }
 
 // Preview returns a paginated, job-shaped view of source or destination data.
-func (o *Orchestrator) Preview(ctx context.Context, jobID uint, side string, page, pageSize int, sortBy, sortDir string) (*PreviewResult, error) {
+func (o *Orchestrator) Preview(ctx context.Context, jobID uint, side string, page, pageSize int, sortBy, sortDir string, exploreFilters []FilterInput) (*PreviewResult, error) {
 	side = strings.TrimSpace(strings.ToLower(side))
 	if side != SideSource && side != SideDestination {
 		return nil, ErrInvalidSide
 	}
 	page, pageSize = normalizeExplorePaging(page, pageSize)
 	sortBy, sortDir, order, err := normalizeExploreSort(sortBy, sortDir)
+	if err != nil {
+		return nil, err
+	}
+	extra, err := parseExploreFilters(exploreFilters)
 	if err != nil {
 		return nil, err
 	}
@@ -117,9 +129,9 @@ func (o *Orchestrator) Preview(ctx context.Context, jobID uint, side string, pag
 
 	switch side {
 	case SideSource:
-		rows, columns, total, err = o.previewSource(ctx, job, pageSize, offset, order)
+		rows, columns, total, err = o.previewSource(ctx, job, pageSize, offset, order, extra)
 	case SideDestination:
-		rows, columns, total, err = o.previewDestination(ctx, job, pageSize, offset, order)
+		rows, columns, total, err = o.previewDestination(ctx, job, pageSize, offset, order, extra)
 	}
 	if err != nil {
 		return nil, err
@@ -142,7 +154,7 @@ func (o *Orchestrator) Preview(ctx context.Context, jobID uint, side string, pag
 	}, nil
 }
 
-func (o *Orchestrator) previewSource(ctx context.Context, job *models.SyncJob, limit, offset int, order *connectors.Order) ([]map[string]any, []string, int64, error) {
+func (o *Orchestrator) previewSource(ctx context.Context, job *models.SyncJob, limit, offset int, order *connectors.Order, extra []connectors.Filter) ([]map[string]any, []string, int64, error) {
 	if job.SourceConnection == nil {
 		return nil, nil, 0, fmt.Errorf("source connection missing")
 	}
@@ -165,7 +177,8 @@ func (o *Orchestrator) previewSource(ctx context.Context, job *models.SyncJob, l
 		return nil, nil, 0, err
 	}
 
-	filters := ActiveFilters(job.Rules)
+	extra = resolveSourceFilters(job.Fields, extra)
+	filters := append(ActiveFilters(job.Rules), extra...)
 	total, err := src.Count(ctx, job.SourceTable, filters)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("count source rows: %w", err)
@@ -183,7 +196,7 @@ func (o *Orchestrator) previewSource(ctx context.Context, job *models.SyncJob, l
 	return docs, exploreColumns(schema, job, docs), total, nil
 }
 
-func (o *Orchestrator) previewDestination(ctx context.Context, job *models.SyncJob, limit, offset int, order *connectors.Order) ([]map[string]any, []string, int64, error) {
+func (o *Orchestrator) previewDestination(ctx context.Context, job *models.SyncJob, limit, offset int, order *connectors.Order, filters []connectors.Filter) ([]map[string]any, []string, int64, error) {
 	if job.DestinationConnection == nil {
 		return nil, nil, 0, fmt.Errorf("destination connection missing")
 	}
@@ -201,7 +214,7 @@ func (o *Orchestrator) previewDestination(ctx context.Context, job *models.SyncJ
 	}
 	defer reader.Close()
 
-	rows, total, err := reader.Query(ctx, job.DestinationTable, limit, offset, order)
+	rows, total, err := reader.Query(ctx, job.DestinationTable, filters, limit, offset, order)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -230,10 +243,14 @@ func (o *Orchestrator) sourceSchema(ctx context.Context, job *models.SyncJob) *c
 }
 
 // ExportCSV writes matching explore rows as CSV, reading in chunks so large tables work.
-func (o *Orchestrator) ExportCSV(ctx context.Context, jobID uint, side string, w io.Writer) (filename string, err error) {
+func (o *Orchestrator) ExportCSV(ctx context.Context, jobID uint, side string, w io.Writer, exploreFilters []FilterInput) (filename string, err error) {
 	side = strings.TrimSpace(strings.ToLower(side))
 	if side != SideSource && side != SideDestination {
 		return "", ErrInvalidSide
+	}
+	extra, err := parseExploreFilters(exploreFilters)
+	if err != nil {
+		return "", err
 	}
 
 	job, err := o.loadJob(jobID)
@@ -248,9 +265,9 @@ func (o *Orchestrator) ExportCSV(ctx context.Context, jobID uint, side string, w
 		var cols []string
 		switch side {
 		case SideSource:
-			rows, cols, _, err = o.previewSource(ctx, job, ExploreExportChunkSize, offset, nil)
+			rows, cols, _, err = o.previewSource(ctx, job, ExploreExportChunkSize, offset, nil, extra)
 		case SideDestination:
-			rows, cols, _, err = o.previewDestination(ctx, job, ExploreExportChunkSize, offset, nil)
+			rows, cols, _, err = o.previewDestination(ctx, job, ExploreExportChunkSize, offset, nil, extra)
 		}
 		if err != nil {
 			return "", err
@@ -359,17 +376,7 @@ func resolveSourceOrder(schema *connectors.TableSchema, fields []models.SyncJobF
 	}
 	want := strings.TrimSpace(order.Column)
 
-	sourceName := ""
-	for _, f := range fields {
-		if !f.IsActive() || f.SourceName == "" {
-			continue
-		}
-		dest := destinationFieldName(f)
-		if dest == want || f.SourceName == want {
-			sourceName = f.SourceName
-			break
-		}
-	}
+	sourceName := mapDisplayToSource(fields, want)
 	if sourceName == "" {
 		sourceName = want
 	}
@@ -392,6 +399,66 @@ func resolveSourceOrder(schema *connectors.TableSchema, fields []models.SyncJobF
 		}
 	}
 	return nil, ErrInvalidSort
+}
+
+func parseExploreFilters(in []FilterInput) ([]connectors.Filter, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make([]connectors.Filter, 0, len(in))
+	for _, f := range in {
+		field := strings.TrimSpace(f.Field)
+		op := strings.TrimSpace(f.Operator)
+		if field == "" {
+			return nil, fmt.Errorf("%w: field is required", ErrInvalidFilter)
+		}
+		if !models.ValidRuleOperator(op) {
+			return nil, fmt.Errorf("%w: unsupported operator %q", ErrInvalidFilter, op)
+		}
+		value := f.Value
+		if models.RuleNeedsValue(op) {
+			if strings.TrimSpace(value) == "" {
+				return nil, fmt.Errorf("%w: value is required for operator %q", ErrInvalidFilter, op)
+			}
+		} else {
+			value = ""
+		}
+		out = append(out, connectors.Filter{Column: field, Operator: op, Value: value})
+	}
+	return out, nil
+}
+
+// resolveSourceFilters maps display/destination field names to source columns.
+func resolveSourceFilters(fields []models.SyncJobField, filters []connectors.Filter) []connectors.Filter {
+	if len(filters) == 0 {
+		return nil
+	}
+	out := make([]connectors.Filter, len(filters))
+	for i, f := range filters {
+		col := mapDisplayToSource(fields, f.Column)
+		if col == "" {
+			col = f.Column
+		}
+		out[i] = connectors.Filter{Column: col, Operator: f.Operator, Value: f.Value}
+	}
+	return out
+}
+
+func mapDisplayToSource(fields []models.SyncJobField, want string) string {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return ""
+	}
+	for _, f := range fields {
+		if !f.IsActive() || f.SourceName == "" {
+			continue
+		}
+		dest := destinationFieldName(f)
+		if dest == want || f.SourceName == want {
+			return f.SourceName
+		}
+	}
+	return ""
 }
 
 func csvCell(v any) string {

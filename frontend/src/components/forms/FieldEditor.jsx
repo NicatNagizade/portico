@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react'
 import { DESTINATION_TYPES } from '../../lib/destinationTypes'
 import { columnNames } from '../../lib/sourceColumns'
 import AutocompleteInput from '../AutocompleteInput'
-import { IconButton, SecondaryButton } from '../ui'
+import { IconButton, SecondaryButton, Toggle } from '../ui'
 
 const compactInput =
   'w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-soft)]'
@@ -50,6 +50,7 @@ export default function FieldEditor({
   description = 'Rename columns, set destination types, map values, or exclude fields. Leave empty to pass through all source columns.',
   sectionNumber = '04',
   compact = false,
+  hideHeader = false,
 }) {
   const [autofilling, setAutofilling] = useState(false)
   const [expanded, setExpanded] = useState({})
@@ -93,8 +94,13 @@ export default function FieldEditor({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        {compact ? (
+      <div
+        className={[
+          'flex items-start gap-3',
+          hideHeader ? 'justify-end' : 'justify-between',
+        ].join(' ')}
+      >
+        {hideHeader ? null : compact ? (
           <p className="pt-1 text-xs font-medium text-[var(--text-muted)]">{title}</p>
         ) : (
           <div className="flex items-start gap-2">
@@ -200,14 +206,13 @@ export default function FieldEditor({
                         </SecondaryButton>
                       </td>
                       <td className="px-2 py-1.5 text-center align-middle">
-                        <input
-                          type="checkbox"
-                          title="Active"
-                          aria-label="Active"
-                          className="h-4 w-4 accent-[var(--accent)]"
-                          checked={row.active !== false}
-                          onChange={(e) => updateRow(index, { active: e.target.checked })}
-                        />
+                        <div className="flex justify-center">
+                          <Toggle
+                            checked={row.active !== false}
+                            onChange={(on) => updateRow(index, { active: on })}
+                            aria-label="Active"
+                          />
+                        </div>
                       </td>
                       <td className="px-1 py-1.5 text-center align-middle">
                         <IconButton label="Remove field" tone="danger" onClick={() => removeRow(index)}>

@@ -168,35 +168,15 @@ func mustJSON(v any) any {
 	return string(b)
 }
 
-func (d *Destination) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	q := d.db.WithContext(ctx).Table(name)
-	var total int64
-	if err := q.Count(&total).Error; err != nil {
+func (d *Destination) Query(ctx context.Context, name string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+	table := d.db.Table(name)
+	total, err := sqlutil.Count(ctx, table, filters, quoteIdent)
+	if err != nil {
 		return nil, 0, fmt.Errorf("sqlite count %q: %w", name, err)
 	}
-
-	page := d.db.WithContext(ctx).Table(name)
-	if order != nil && strings.TrimSpace(order.Column) != "" {
-		col := quoteIdent(strings.TrimSpace(order.Column))
-		if order.Desc {
-			page = page.Order(col + " DESC")
-		} else {
-			page = page.Order(col + " ASC")
-		}
-	}
-	var rows []map[string]any
-	if err := page.Limit(limit).Offset(offset).Find(&rows).Error; err != nil {
+	rows, err := sqlutil.QueryPage(ctx, table, nil, filters, quoteIdent, limit, offset, order)
+	if err != nil {
 		return nil, 0, fmt.Errorf("sqlite select %q: %w", name, err)
-	}
-	if rows == nil {
-		rows = []map[string]any{}
 	}
 	return rows, total, nil
 }
