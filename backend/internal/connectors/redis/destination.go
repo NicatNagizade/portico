@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/portico/backend/internal/connectors"
-	"github.com/portico/backend/internal/connectors/docutil"
 	"github.com/portico/backend/internal/models"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -81,20 +79,13 @@ func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[st
 }
 
 func (d *Destination) Query(ctx context.Context, name string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
-	docs, err := loadTableDocs(ctx, d.client, d.cfg, name)
-	if err != nil {
-		return nil, 0, err
-	}
-	docs = docutil.FilterRows(docs, filters)
-	total := int64(len(docs))
-	docutil.SortRows(docs, order)
-	return docutil.PageRows(docs, limit, offset), total, nil
+	return queryDocs(ctx, d.client, d.cfg, name, filters, limit, offset, order)
 }
 
 func deleteKeysByPattern(ctx context.Context, client *goredis.Client, pattern string) error {
 	var cursor uint64
 	for {
-		keys, next, err := client.Scan(ctx, cursor, pattern, 200).Result()
+		keys, next, err := client.Scan(ctx, cursor, pattern, scanCount).Result()
 		if err != nil {
 			return err
 		}
@@ -108,51 +99,4 @@ func deleteKeysByPattern(ctx context.Context, client *goredis.Client, pattern st
 			return nil
 		}
 	}
-}
-
-func loadTableDocs(ctx context.Context, client *goredis.Client, cfg Config, table string) ([]map[string]any, error) {
-	var cursor uint64
-	var keys []string
-	pattern := cfg.KeyPattern(table)
-	for {
-		batch, next, err := client.Scan(ctx, cursor, pattern, 200).Result()
-		if err != nil {
-			return nil, fmt.Errorf("redis scan %q: %w", table, err)
-		}
-		keys = append(keys, batch...)
-		cursor = next
-		if cursor == 0 {
-			break
-		}
-	}
-	sort.Strings(keys)
-	if len(keys) == 0 {
-		return []map[string]any{}, nil
-	}
-	vals, err := client.MGet(ctx, keys...).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis mget %q: %w", table, err)
-	}
-	docs := make([]map[string]any, 0, len(vals))
-	for i, v := range vals {
-		if v == nil {
-			continue
-		}
-		s, ok := v.(string)
-		if !ok {
-			continue
-		}
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(s), &doc); err != nil {
-			return nil, fmt.Errorf("redis unmarshal %q: %w", keys[i], err)
-		}
-		if doc == nil {
-			doc = map[string]any{}
-		}
-		if _, hasID := doc["id"]; !hasID {
-			doc["id"] = cfg.IDFromKey(table, keys[i])
-		}
-		docs = append(docs, doc)
-	}
-	return docs, nil
 }

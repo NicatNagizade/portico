@@ -22,56 +22,151 @@ func MatchFilters(row map[string]any, filters []connectors.Filter) bool {
 }
 
 func matchFilter(row map[string]any, f connectors.Filter) bool {
-	raw, ok := row[f.Column]
+	values := pathValues(row, strings.Split(f.Column, "."))
 	switch f.Operator {
 	case models.RuleOperatorIsNull:
-		return !ok || raw == nil
-	case models.RuleOperatorIsNotNull:
-		return ok && raw != nil
-	}
-	if !ok || raw == nil {
-		return false
-	}
-
-	left := fmt.Sprint(raw)
-	switch f.Operator {
-	case models.RuleOperatorEq:
-		return left == f.Value || numericEqual(raw, f.Value)
-	case models.RuleOperatorNeq:
-		return left != f.Value && !numericEqual(raw, f.Value)
-	case models.RuleOperatorLike:
-		return likeMatch(left, f.Value)
-	case models.RuleOperatorIn:
-		for _, v := range splitCSV(f.Value) {
-			if left == v || numericEqual(raw, v) {
+		if len(values) == 0 {
+			return true
+		}
+		for _, raw := range values {
+			if raw == nil {
 				return true
 			}
 		}
 		return false
-	case models.RuleOperatorNotIn:
-		for _, v := range splitCSV(f.Value) {
-			if left == v || numericEqual(raw, v) {
+	case models.RuleOperatorIsNotNull:
+		for _, raw := range values {
+			if raw != nil {
+				return true
+			}
+		}
+		return false
+	}
+	if len(values) == 0 {
+		return false
+	}
+
+	switch f.Operator {
+	case models.RuleOperatorEq:
+		for _, raw := range values {
+			if raw == nil {
+				continue
+			}
+			if fmt.Sprint(raw) == f.Value || numericEqual(raw, f.Value) {
+				return true
+			}
+		}
+		return false
+	case models.RuleOperatorNeq:
+		for _, raw := range values {
+			if raw == nil {
+				continue
+			}
+			if fmt.Sprint(raw) == f.Value || numericEqual(raw, f.Value) {
 				return false
 			}
 		}
 		return true
+	case models.RuleOperatorLike:
+		for _, raw := range values {
+			if raw != nil && likeMatch(fmt.Sprint(raw), f.Value) {
+				return true
+			}
+		}
+		return false
+	case models.RuleOperatorIn:
+		want := splitCSV(f.Value)
+		for _, raw := range values {
+			if raw == nil {
+				continue
+			}
+			left := fmt.Sprint(raw)
+			for _, v := range want {
+				if left == v || numericEqual(raw, v) {
+					return true
+				}
+			}
+		}
+		return false
+	case models.RuleOperatorNotIn:
+		want := splitCSV(f.Value)
+		for _, raw := range values {
+			if raw == nil {
+				continue
+			}
+			left := fmt.Sprint(raw)
+			for _, v := range want {
+				if left == v || numericEqual(raw, v) {
+					return false
+				}
+			}
+		}
+		return true
 	case models.RuleOperatorGt, models.RuleOperatorGte, models.RuleOperatorLt, models.RuleOperatorLte:
-		cmp, ok := compareNumeric(raw, f.Value)
-		if !ok {
-			cmp = strings.Compare(left, f.Value)
+		for _, raw := range values {
+			if raw == nil {
+				continue
+			}
+			cmp, ok := compareNumeric(raw, f.Value)
+			if !ok {
+				cmp = strings.Compare(fmt.Sprint(raw), f.Value)
+			}
+			switch f.Operator {
+			case models.RuleOperatorGt:
+				if cmp > 0 {
+					return true
+				}
+			case models.RuleOperatorGte:
+				if cmp >= 0 {
+					return true
+				}
+			case models.RuleOperatorLt:
+				if cmp < 0 {
+					return true
+				}
+			case models.RuleOperatorLte:
+				if cmp <= 0 {
+					return true
+				}
+			}
 		}
-		switch f.Operator {
-		case models.RuleOperatorGt:
-			return cmp > 0
-		case models.RuleOperatorGte:
-			return cmp >= 0
-		case models.RuleOperatorLt:
-			return cmp < 0
-		case models.RuleOperatorLte:
-			return cmp <= 0
-		}
+		return false
 	}
 	return false
+}
+
+// pathValues collects values at a dotted path. Arrays contribute every element (Mongo-style).
+func pathValues(v any, parts []string) []any {
+	if len(parts) == 0 {
+		if v == nil {
+			return nil
+		}
+		return []any{v}
+	}
+	key := parts[0]
+	rest := parts[1:]
+	switch x := v.(type) {
+	case map[string]any:
+		child, ok := x[key]
+		if !ok {
+			return nil
+		}
+		return pathValues(child, rest)
+	case []map[string]any:
+		var out []any
+		for _, item := range x {
+			out = append(out, pathValues(item, parts)...)
+		}
+		return out
+	case []any:
+		var out []any
+		for _, item := range x {
+			out = append(out, pathValues(item, parts)...)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func splitCSV(value string) []string {
@@ -239,41 +334,6 @@ func ReadChunksInMemory(rows []map[string]any, chunkSize int, filters []connecto
 	return nil
 }
 
-// SchemaFromDocs builds a TableSchema from sample documents. id is marked primary key when present.
-func SchemaFromDocs(docs []map[string]any) *connectors.TableSchema {
-	seen := map[string]connectors.FieldType{}
-	var order []string
-	for _, doc := range docs {
-		for k, v := range doc {
-			if _, ok := seen[k]; ok {
-				continue
-			}
-			seen[k] = InferFieldType(v)
-			order = append(order, k)
-		}
-	}
-	sort.Strings(order)
-	// Prefer id first when present.
-	if _, ok := seen["id"]; ok {
-		rest := make([]string, 0, len(order)-1)
-		for _, k := range order {
-			if k != "id" {
-				rest = append(rest, k)
-			}
-		}
-		order = append([]string{"id"}, rest...)
-	}
-	schema := &connectors.TableSchema{Columns: make([]connectors.ColumnSchema, 0, len(order))}
-	for _, k := range order {
-		schema.Columns = append(schema.Columns, connectors.ColumnSchema{
-			Name:       k,
-			Type:       seen[k],
-			PrimaryKey: k == "id",
-		})
-	}
-	return schema
-}
-
 // InferFieldType maps a Go value to a Portico field type.
 func InferFieldType(v any) connectors.FieldType {
 	switch x := v.(type) {
@@ -285,7 +345,7 @@ func InferFieldType(v any) connectors.FieldType {
 		return connectors.FieldTypeInt64
 	case float32, float64:
 		return connectors.FieldTypeFloat64
-	case []any:
+	case []any, []map[string]any:
 		return connectors.FieldTypeObjectArray
 	case map[string]any:
 		return connectors.FieldTypeObject

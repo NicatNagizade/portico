@@ -178,9 +178,11 @@ func (h *Handlers) ListConnectionTables(c *gin.Context) {
 }
 
 // ColumnInfo is a source column name + mapped Portico field type.
+// Nested Columns (document relations) are included when the connector schema has them.
 type ColumnInfo struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name    string       `json:"name"`
+	Type    string       `json:"type"`
+	Columns []ColumnInfo `json:"columns,omitempty"`
 }
 
 // ListConnectionColumns godoc
@@ -213,14 +215,19 @@ func (h *Handlers) ListConnectionColumns(c *gin.Context) {
 		return
 	}
 
-	columns := make([]ColumnInfo, 0, len(schema.Columns))
-	for _, col := range schema.Columns {
-		columns = append(columns, ColumnInfo{
-			Name: col.Name,
-			Type: string(col.Type),
-		})
+	c.JSON(http.StatusOK, gin.H{"columns": columnInfos(schema.Columns)})
+}
+
+func columnInfos(cols []connectors.ColumnSchema) []ColumnInfo {
+	out := make([]ColumnInfo, 0, len(cols))
+	for _, col := range cols {
+		info := ColumnInfo{Name: col.Name, Type: string(col.Type)}
+		if len(col.Columns) > 0 {
+			info.Columns = columnInfos(col.Columns)
+		}
+		out = append(out, info)
 	}
-	c.JSON(http.StatusOK, gin.H{"columns": columns})
+	return out
 }
 
 func (h *Handlers) openSource(c *gin.Context) (connectors.SourceReader, bool) {

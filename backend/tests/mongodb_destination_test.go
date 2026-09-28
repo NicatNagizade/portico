@@ -2,8 +2,10 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
+	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/connectors/mongodb"
 	"github.com/portico/backend/internal/models"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -57,9 +59,9 @@ func TestMongoBuildURI(t *testing.T) {
 }
 
 func TestMongoDocForWriteAndFromRead(t *testing.T) {
-	got := mongodb.DocForWrite(map[string]any{"id": 42, "name": "Ada"})
-	if got["_id"] != 42 {
-		t.Fatalf("_id=%v, want 42", got["_id"])
+	got := mongodb.DocForWrite(map[string]any{"id": "42", "name": "Ada"})
+	if got["_id"] != "42" {
+		t.Fatalf("_id=%v, want string 42", got["_id"])
 	}
 	if _, ok := got["id"]; ok {
 		t.Fatal("id should be removed when mapped to _id")
@@ -91,5 +93,155 @@ func TestMongoNewDestination(t *testing.T) {
 	}
 	if dst == nil {
 		t.Fatal("expected destination")
+	}
+}
+
+func TestMongoParseCollectionConfig(t *testing.T) {
+	cfg, err := mongodb.ParseCollectionConfig(nil)
+	if err != nil || cfg != nil {
+		t.Fatalf("nil config: cfg=%v err=%v", cfg, err)
+	}
+	cfg, err = mongodb.ParseCollectionConfig([]byte(`{"apply_schema":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg == nil || !cfg.ApplySchema {
+		t.Fatalf("got %+v", cfg)
+	}
+	cfg, err = mongodb.ParseCollectionConfig([]byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ApplySchema {
+		t.Fatal("expected apply_schema=false by default")
+	}
+}
+
+func TestMongoBuildValidator(t *testing.T) {
+	schema := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+			{Name: "name", Type: connectors.FieldTypeString},
+			{
+				Name: "posts",
+				Type: connectors.FieldTypeObjectArray,
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "title", Type: connectors.FieldTypeString},
+					{
+						Name: "comments",
+						Type: connectors.FieldTypeObjectArray,
+						Columns: []connectors.ColumnSchema{
+							{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+							{Name: "body", Type: connectors.FieldTypeString},
+							{Name: "reactions", Type: connectors.FieldTypeObjectArray},
+						},
+					},
+				},
+			},
+			{Name: "meta", Type: connectors.FieldTypeObject},
+			{Name: "active", Type: connectors.FieldTypeBool},
+			{Name: "score", Type: connectors.FieldTypeFloat64},
+		},
+	}
+	validator, err := mongodb.BuildValidator(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, ok := validator["$jsonSchema"].(bson.M)
+	if !ok {
+		t.Fatalf("expected $jsonSchema map, got %#v", validator["$jsonSchema"])
+	}
+	props, ok := js["properties"].(bson.M)
+	if !ok {
+		t.Fatalf("properties=%#v", js["properties"])
+	}
+	if _, hasID := props["id"]; hasID {
+		t.Fatal("id should be mapped to _id only")
+	}
+	idProp, ok := props["_id"].(bson.M)
+	if !ok {
+		t.Fatalf("_id=%#v", props["_id"])
+	}
+	if got := fmt.Sprint(idProp["bsonType"]); got != "[string null]" {
+		t.Fatalf("_id bsonType=%v", idProp["bsonType"])
+	}
+	nameProp := props["name"].(bson.M)
+	if got := fmt.Sprint(nameProp["bsonType"]); got != "[string date null]" {
+		t.Fatalf("name bsonType=%v", nameProp["bsonType"])
+	}
+	postsProp := props["posts"].(bson.M)
+	if got := fmt.Sprint(postsProp["bsonType"]); got != "[array null]" {
+		t.Fatalf("posts bsonType=%v", postsProp["bsonType"])
+	}
+	items, ok := postsProp["items"].(bson.M)
+	if !ok {
+		t.Fatalf("posts items=%#v", postsProp["items"])
+	}
+	itemProps, ok := items["properties"].(bson.M)
+	if !ok {
+		t.Fatalf("posts item properties=%#v", items["properties"])
+	}
+	title, ok := itemProps["title"].(bson.M)
+	if !ok {
+		t.Fatalf("expected title under posts items, got %#v", itemProps)
+	}
+	if got := fmt.Sprint(title["bsonType"]); got != "[string date null]" {
+		t.Fatalf("posts.title bsonType=%v", title["bsonType"])
+	}
+	postID, ok := itemProps["id"].(bson.M)
+	if !ok {
+		t.Fatalf("expected nested id under posts, got %#v", itemProps)
+	}
+	if got := fmt.Sprint(postID["bsonType"]); got != "[int long null]" {
+		t.Fatalf("posts.id bsonType=%v (nested id stays int, not _id)", postID["bsonType"])
+	}
+	comments, ok := itemProps["comments"].(bson.M)
+	if !ok {
+		t.Fatalf("expected comments under posts items, got %#v", itemProps)
+	}
+	commentItems, ok := comments["items"].(bson.M)
+	if !ok {
+		t.Fatalf("comments items=%#v", comments["items"])
+	}
+	commentProps := commentItems["properties"].(bson.M)
+	if body, ok := commentProps["body"].(bson.M); !ok || fmt.Sprint(body["bsonType"]) != "[string date null]" {
+		t.Fatalf("comments.body=%#v", commentProps["body"])
+	}
+	if _, ok := commentProps["reactions"]; !ok {
+		t.Fatalf("expected reactions under comments, got %#v", commentProps)
+	}
+	if _, err := mongodb.BuildValidator(nil); err == nil {
+		t.Fatal("expected error for nil schema")
+	}
+	if _, err := mongodb.BuildValidator(&connectors.TableSchema{}); err == nil {
+		t.Fatal("expected error for empty schema")
+	}
+
+	roundTrip := mongodb.SchemaFromValidator(validator)
+	if roundTrip == nil {
+		t.Fatal("expected schema from validator")
+	}
+	rtByName := map[string]connectors.ColumnSchema{}
+	for _, c := range roundTrip.Columns {
+		rtByName[c.Name] = c
+	}
+	if rtByName["id"].Type != connectors.FieldTypeString || !rtByName["id"].PrimaryKey {
+		t.Fatalf("id=%+v", rtByName["id"])
+	}
+	rtPosts := rtByName["posts"]
+	if rtPosts.Type != connectors.FieldTypeObjectArray {
+		t.Fatalf("posts=%+v", rtPosts)
+	}
+	rtPostFields := map[string]connectors.ColumnSchema{}
+	for _, c := range rtPosts.Columns {
+		rtPostFields[c.Name] = c
+	}
+	if rtPostFields["title"].Type != connectors.FieldTypeString {
+		t.Fatalf("posts.title=%+v", rtPostFields["title"])
+	}
+	rtComments := rtPostFields["comments"]
+	if rtComments.Type != connectors.FieldTypeObjectArray || len(rtComments.Columns) == 0 {
+		t.Fatalf("posts.comments=%+v", rtComments)
 	}
 }

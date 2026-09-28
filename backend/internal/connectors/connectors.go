@@ -24,6 +24,8 @@ type ColumnSchema struct {
 	Name       string
 	Type       FieldType
 	PrimaryKey bool
+	// Columns holds nested object / array-item fields (e.g. relation trees).
+	Columns []ColumnSchema
 }
 
 type TableSchema struct {

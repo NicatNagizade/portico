@@ -31,7 +31,13 @@ func main() {
 
 	switch os.Args[1] {
 	case "migrate":
-		if err := migrate.Run(ctx, cfg); err != nil {
+		truncate, err := parseMigrateFlags(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n\n", err)
+			printUsage()
+			os.Exit(1)
+		}
+		if err := migrate.Run(ctx, cfg, truncate); err != nil {
 			log.Fatalf("migrate failed: %v", err)
 		}
 	case "seed":
@@ -47,11 +53,27 @@ func main() {
 	}
 }
 
+func parseMigrateFlags(args []string) (truncate bool, err error) {
+	for _, a := range args {
+		switch a {
+		case "--truncate", "truncate":
+			truncate = true
+		case "-h", "--help", "help":
+			return false, fmt.Errorf("usage: go run . migrate [--truncate]")
+		default:
+			return false, fmt.Errorf("unknown migrate flag %q", a)
+		}
+	}
+	return truncate, nil
+}
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage:
-  go run . migrate   Create the Postgres database (if missing) and tables
-  go run . seed      Truncate and insert fake users, posts, comments, reactions
+  go run . migrate [--truncate]   Create the database (if missing) and tables
+                                  --truncate drops existing example tables first
+  go run . seed                   Truncate and insert fake users, posts, comments, reactions
 
 Config is read from .env (see .env.example).
+Set DB_DATABASE=postgres (default) or DB_DATABASE=mysql.
 `)
 }

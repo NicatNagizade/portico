@@ -2,13 +2,21 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
 
+const (
+	DatabasePostgres = "postgres"
+	DatabaseMySQL    = "mysql"
+)
+
 type Config struct {
+	Database   string
 	DBHost     string
 	DBPort     string
 	DBUser     string
@@ -30,11 +38,18 @@ type Config struct {
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
+	database := strings.ToLower(getEnv("DB_DATABASE", DatabasePostgres))
+	defaultPort, defaultUser, defaultPassword := "5432", "postgres", "postgres"
+	if database == DatabaseMySQL {
+		defaultPort, defaultUser, defaultPassword = "3306", "root", ""
+	}
+
 	cfg := &Config{
+		Database:   database,
 		DBHost:     getEnv("DB_HOST", "localhost"),
-		DBPort:     getEnv("DB_PORT", "5432"),
-		DBUser:     getEnv("DB_USER", "postgres"),
-		DBPassword: getEnv("DB_PASSWORD", "postgres"),
+		DBPort:     getEnv("DB_PORT", defaultPort),
+		DBUser:     getEnv("DB_USER", defaultUser),
+		DBPassword: getEnv("DB_PASSWORD", defaultPassword),
 		DBName:     getEnv("DB_NAME", "portico_example"),
 		DBSSLMode:  getEnv("DB_SSLMODE", "disable"),
 
@@ -49,6 +64,11 @@ func Load() (*Config, error) {
 		UserBatchSize:  getEnvInt("USER_BATCH_SIZE", 500),
 	}
 
+	switch cfg.Database {
+	case DatabasePostgres, DatabaseMySQL:
+	default:
+		return nil, fmt.Errorf("DB_DATABASE must be %q or %q", DatabasePostgres, DatabaseMySQL)
+	}
 	if cfg.UserCount < 1 {
 		return nil, fmt.Errorf("USER_COUNT must be >= 1")
 	}
@@ -67,20 +87,34 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+func (c *Config) IsMySQL() bool { return c.Database == DatabaseMySQL }
+
 func (c *Config) AdminDSN() string {
+	if c.IsMySQL() {
+		return c.mysqlDSN("")
+	}
 	// template1 always exists; safer than assuming a "postgres" database.
-	return c.dsn("template1")
+	return c.postgresDSN("template1")
 }
 
 func (c *Config) DSN() string {
-	return c.dsn(c.DBName)
+	if c.IsMySQL() {
+		return c.mysqlDSN(c.DBName)
+	}
+	return c.postgresDSN(c.DBName)
 }
 
-func (c *Config) dsn(dbName string) string {
+func (c *Config) postgresDSN(dbName string) string {
 	return fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
 		c.DBHost, c.DBUser, c.DBPassword, dbName, c.DBPort, c.DBSSLMode,
 	)
+}
+
+func (c *Config) mysqlDSN(dbName string) string {
+	user := url.UserPassword(c.DBUser, c.DBPassword)
+	return fmt.Sprintf("%s@tcp(%s:%s)/%s?parseTime=true&charset=utf8mb4&multiStatements=true",
+		user.String(), c.DBHost, c.DBPort, dbName)
 }
 
 func getEnv(key, fallback string) string {

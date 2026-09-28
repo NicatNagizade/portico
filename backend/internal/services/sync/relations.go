@@ -562,29 +562,81 @@ func enrichDocs(
 	return nil
 }
 
-// SchemaWithRelations appends active root-level relation columns onto a base table schema.
-// Nested relations (parent_id set) are omitted; Typesense indexes them via enable_nested_fields.
-func SchemaWithRelations(base *connectors.TableSchema, relations []models.SyncJobRelation) *connectors.TableSchema {
+// LoadRelationSchemas introspects each distinct active relation table once.
+func LoadRelationSchemas(ctx context.Context, src connectors.SourceReader, relations []models.SyncJobRelation) (map[string]*connectors.TableSchema, error) {
+	out := make(map[string]*connectors.TableSchema)
+	for _, rel := range relations {
+		if !rel.IsActive() || rel.Table == "" {
+			continue
+		}
+		if _, ok := out[rel.Table]; ok {
+			continue
+		}
+		schema, err := src.Schema(ctx, rel.Table)
+		if err != nil {
+			return nil, fmt.Errorf("relation table %q schema: %w", rel.Table, err)
+		}
+		out[rel.Table] = schema
+	}
+	return out, nil
+}
+
+// DestinationSchema builds the destination table schema: root fields, then nested
+// relation columns with related-table fields/types and child relations.
+func DestinationSchema(ctx context.Context, src connectors.SourceReader, base *connectors.TableSchema, job *models.SyncJob) (*connectors.TableSchema, error) {
+	related, err := LoadRelationSchemas(ctx, src, job.Relations)
+	if err != nil {
+		return nil, err
+	}
+	return SchemaWithFields(SchemaWithRelations(base, job.Relations, related), job.Fields), nil
+}
+
+// SchemaWithRelations appends active relation columns onto a base table schema.
+// Each relation includes related-table columns from related[table] (after field
+// overrides) plus nested child relations under Columns.
+func SchemaWithRelations(base *connectors.TableSchema, relations []models.SyncJobRelation, related map[string]*connectors.TableSchema) *connectors.TableSchema {
 	out := &connectors.TableSchema{
 		Columns: make([]connectors.ColumnSchema, len(base.Columns), len(base.Columns)+len(relations)),
 	}
 	copy(out.Columns, base.Columns)
+
+	children := map[uint][]models.SyncJobRelation{}
+	var roots []models.SyncJobRelation
 	for _, rel := range relations {
 		if !rel.IsActive() {
 			continue
 		}
-		if rel.ParentID != nil {
+		if rel.ParentID == nil {
+			roots = append(roots, rel)
 			continue
 		}
-		ft := connectors.FieldTypeObjectArray
-		switch rel.Type {
-		case models.RelationTypeHasOne, models.RelationTypeBelongsTo:
-			ft = connectors.FieldTypeObject
-		}
-		out.Columns = append(out.Columns, connectors.ColumnSchema{
-			Name: rel.Name,
-			Type: ft,
-		})
+		children[*rel.ParentID] = append(children[*rel.ParentID], rel)
+	}
+	for _, rel := range roots {
+		out.Columns = append(out.Columns, relationColumn(rel, children, related))
 	}
 	return out
+}
+
+func relationColumn(rel models.SyncJobRelation, children map[uint][]models.SyncJobRelation, related map[string]*connectors.TableSchema) connectors.ColumnSchema {
+	ft := connectors.FieldTypeObjectArray
+	switch rel.Type {
+	case models.RelationTypeHasOne, models.RelationTypeBelongsTo:
+		ft = connectors.FieldTypeObject
+	}
+	col := connectors.ColumnSchema{Name: rel.Name, Type: ft}
+
+	if base := related[rel.Table]; base != nil {
+		shaped := SchemaWithFields(base, rel.Fields)
+		if shaped != nil {
+			col.Columns = append(col.Columns, shaped.Columns...)
+		}
+	}
+	for _, child := range children[rel.ID] {
+		if !child.IsActive() {
+			continue
+		}
+		col.Columns = append(col.Columns, relationColumn(child, children, related))
+	}
+	return col
 }

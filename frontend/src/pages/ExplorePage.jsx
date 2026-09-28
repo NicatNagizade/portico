@@ -25,7 +25,7 @@ import {
 } from '../components/ui'
 import useConnectionSchema from '../hooks/useConnectionSchema'
 import { ruleNeedsValue } from '../lib/ruleOperators'
-import { columnNames } from '../lib/sourceColumns'
+import { flattenColumnNames } from '../lib/sourceColumns'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 const DEFAULT_PAGE_SIZE = 50
@@ -214,9 +214,19 @@ function jobFieldOptions(job) {
     add(f.destination_name || f.source_name)
     add(f.source_name)
   }
+  function addRelation(rel, prefix) {
+    const name = rel.name?.trim()
+    if (!name) return
+    const path = prefix ? `${prefix}.${name}` : name
+    add(path)
+    for (const child of rel.relations || []) {
+      if (child.active === false) continue
+      addRelation(child, path)
+    }
+  }
   for (const r of job?.relations || []) {
     if (r.active === false) continue
-    add(r.name)
+    addRelation(r, '')
   }
   return out
 }
@@ -251,7 +261,8 @@ export default function ExplorePage() {
     side === 'source' ? job?.source_connection_id : job?.destination_connection_id
   const schemaTable = side === 'source' ? job?.source_table : job?.destination_table
   const { columnsByTable, ensureColumns } = useConnectionSchema(schemaConnectionId)
-  const schemaColumnNames = columnNames(columnsByTable[schemaTable?.trim()] || [])
+  // Side connection schema (Mongo/Typesense/Redis include nested relation paths when present).
+  const schemaColumnNames = flattenColumnNames(columnsByTable[schemaTable?.trim()] || [])
 
   const fieldOptions = (() => {
     const seen = new Set()
@@ -318,6 +329,12 @@ export default function ExplorePage() {
       cancelled = true
     }
   }, [jobId])
+
+  // Prefetch side-table schema so nested collection fields appear in filter autocomplete.
+  useEffect(() => {
+    if (!job || !schemaTable) return
+    ensureColumns(schemaTable)
+  }, [job, schemaTable, side])
 
   async function runQuery(
     nextPage = 1,

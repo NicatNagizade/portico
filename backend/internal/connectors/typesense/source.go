@@ -98,6 +98,12 @@ func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSch
 			Type: mapTypesenseType(f.Type),
 		})
 	}
+	// Collection schema often declares relations as opaque object/object[].
+	// Sample documents fill nested Columns when present.
+	docs, _, _ := searchPage(ctx, s.client, table, "", 50, 0)
+	if len(docs) > 0 {
+		schema = docutil.MergeNestedFrom(schema, docutil.SchemaFromDocs(docs))
+	}
 	return schema, nil
 }
 

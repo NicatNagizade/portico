@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/portico/backend/internal/connectors"
-	"github.com/portico/backend/internal/connectors/docutil"
 	"github.com/portico/backend/internal/models"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
+
+// Shorter than the driver's 30s default so unreachable hosts fail quickly on check/Open.
+const connectTimeout = 2 * time.Second
 
 type Config struct {
 	Host       string `json:"host"`
@@ -80,17 +83,31 @@ func BuildURI(cfg Config) string {
 	return u.String()
 }
 
-func (d *Destination) Open(ctx context.Context) error {
-	client, err := mongo.Connect(options.Client().ApplyURI(BuildURI(d.cfg)))
+func connect(ctx context.Context, cfg Config) (*mongo.Client, *mongo.Database, error) {
+	opts := options.Client().
+		ApplyURI(BuildURI(cfg)).
+		SetServerSelectionTimeout(connectTimeout).
+		SetConnectTimeout(connectTimeout)
+	client, err := mongo.Connect(opts)
 	if err != nil {
-		return fmt.Errorf("mongodb connect: %w", err)
+		return nil, nil, fmt.Errorf("mongodb connect: %w", err)
 	}
-	if err := client.Ping(ctx, readpref.Primary()); err != nil {
-		_ = client.Disconnect(ctx)
-		return fmt.Errorf("mongodb ping: %w", err)
+	pingCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	if err := client.Ping(pingCtx, readpref.Primary()); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, nil, fmt.Errorf("mongodb ping: %w", err)
+	}
+	return client, client.Database(cfg.Database), nil
+}
+
+func (d *Destination) Open(ctx context.Context) error {
+	client, db, err := connect(ctx, d.cfg)
+	if err != nil {
+		return err
 	}
 	d.client = client
-	d.db = client.Database(d.cfg.Database)
+	d.db = db
 	return nil
 }
 
@@ -104,9 +121,24 @@ func (d *Destination) Close() error {
 	return err
 }
 
-func (d *Destination) Prepare(ctx context.Context, name string, _ *connectors.TableSchema, _ json.RawMessage) error {
+func (d *Destination) Prepare(ctx context.Context, name string, schema *connectors.TableSchema, config json.RawMessage) error {
 	if err := d.db.Collection(name).Drop(ctx); err != nil {
 		return fmt.Errorf("drop mongodb collection %q: %w", name, err)
+	}
+	cfg, err := ParseCollectionConfig(config)
+	if err != nil {
+		return err
+	}
+	if cfg == nil || !cfg.ApplySchema {
+		return nil
+	}
+	validator, err := BuildValidator(schema)
+	if err != nil {
+		return err
+	}
+	opts := options.CreateCollection().SetValidator(validator)
+	if err := d.db.CreateCollection(ctx, name, opts); err != nil {
+		return fmt.Errorf("create mongodb collection %q with schema: %w", name, err)
 	}
 	return nil
 }
@@ -126,7 +158,7 @@ func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[st
 	return nil
 }
 
-// DocForWrite copies doc and maps Portico "id" onto MongoDB "_id".
+// DocForWrite copies doc and maps Portico "id" onto MongoDB "_id" (string).
 func DocForWrite(doc map[string]any) map[string]any {
 	out := make(map[string]any, len(doc)+1)
 	for k, v := range doc {
@@ -136,12 +168,13 @@ func DocForWrite(doc map[string]any) map[string]any {
 		out[k] = v
 	}
 	if id, ok := doc["id"]; ok && id != nil && fmt.Sprint(id) != "" {
-		out["_id"] = id
+		out["_id"] = fmt.Sprint(id)
 	}
 	return out
 }
 
 // DocFromRead copies a stored document and maps "_id" back to "id" for explore/UI.
+// Nested BSON maps/arrays are normalized to map[string]any / []any.
 func DocFromRead(doc map[string]any) map[string]any {
 	out := make(map[string]any, len(doc))
 	for k, v := range doc {
@@ -149,13 +182,46 @@ func DocFromRead(doc map[string]any) map[string]any {
 			out["id"] = normalizeID(v)
 			continue
 		}
-		out[k] = v
+		out[k] = normalizeBSONValue(v)
 	}
 	return out
 }
 
 func normalizeID(v any) any {
 	switch x := v.(type) {
+	case bson.ObjectID:
+		return x.Hex()
+	default:
+		return normalizeBSONValue(v)
+	}
+}
+
+func normalizeBSONValue(v any) any {
+	switch x := v.(type) {
+	case bson.M:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			out[k] = normalizeBSONValue(val)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			out[k] = normalizeBSONValue(val)
+		}
+		return out
+	case bson.A:
+		out := make([]any, len(x))
+		for i, val := range x {
+			out[i] = normalizeBSONValue(val)
+		}
+		return out
+	case bson.D:
+		out := make(map[string]any, len(x))
+		for _, e := range x {
+			out[e.Key] = normalizeBSONValue(e.Value)
+		}
+		return out
 	case bson.ObjectID:
 		return x.Hex()
 	default:
@@ -171,29 +237,20 @@ func (d *Destination) Query(ctx context.Context, name string, filters []connecto
 		offset = 0
 	}
 
-	if len(filters) > 0 {
-		docs, err := d.loadDocs(ctx, name)
-		if err != nil {
-			return nil, 0, err
-		}
-		docs = docutil.FilterRows(docs, filters)
-		total := int64(len(docs))
-		docutil.SortRows(docs, order)
-		return docutil.PageRows(docs, limit, offset), total, nil
+	filter, err := BuildFilter(filters)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	coll := d.db.Collection(name)
-	total, err := coll.CountDocuments(ctx, bson.D{})
+	total, err := coll.CountDocuments(ctx, filter)
 	if err != nil {
 		return nil, 0, fmt.Errorf("mongodb count %q: %w", name, err)
 	}
 
 	findOpts := options.Find().SetSkip(int64(offset)).SetLimit(int64(limit))
 	if order != nil && strings.TrimSpace(order.Column) != "" {
-		col := strings.TrimSpace(order.Column)
-		if col == "id" {
-			col = "_id"
-		}
+		col := filterColumn(order.Column)
 		dir := 1
 		if order.Desc {
 			dir = -1
@@ -201,33 +258,28 @@ func (d *Destination) Query(ctx context.Context, name string, filters []connecto
 		findOpts.SetSort(bson.D{{Key: col, Value: dir}})
 	}
 
-	cur, err := coll.Find(ctx, bson.D{}, findOpts)
+	cur, err := coll.Find(ctx, filter, findOpts)
 	if err != nil {
 		return nil, 0, fmt.Errorf("mongodb find %q: %w", name, err)
 	}
 	defer cur.Close(ctx)
 
-	rows := []map[string]any{}
-	for cur.Next(ctx) {
-		var raw bson.M
-		if err := cur.Decode(&raw); err != nil {
-			return nil, 0, fmt.Errorf("mongodb decode: %w", err)
-		}
-		rows = append(rows, DocFromRead(bsonMToMap(raw)))
-	}
-	if err := cur.Err(); err != nil {
-		return nil, 0, fmt.Errorf("mongodb cursor: %w", err)
+	rows, err := decodeDocs(cur, ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	return rows, total, nil
 }
 
-func (d *Destination) loadDocs(ctx context.Context, name string) ([]map[string]any, error) {
-	cur, err := d.db.Collection(name).Find(ctx, bson.D{})
-	if err != nil {
-		return nil, fmt.Errorf("mongodb find %q: %w", name, err)
+func bsonMToMap(m bson.M) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
 	}
-	defer cur.Close(ctx)
+	return out
+}
 
+func decodeDocs(cur *mongo.Cursor, ctx context.Context) ([]map[string]any, error) {
 	rows := []map[string]any{}
 	for cur.Next(ctx) {
 		var raw bson.M
@@ -240,12 +292,4 @@ func (d *Destination) loadDocs(ctx context.Context, name string) ([]map[string]a
 		return nil, fmt.Errorf("mongodb cursor: %w", err)
 	}
 	return rows, nil
-}
-
-func bsonMToMap(m bson.M) map[string]any {
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
 }

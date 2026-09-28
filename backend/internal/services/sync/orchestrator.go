@@ -203,7 +203,10 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 	if err != nil {
 		return 0, 0, fmt.Errorf("introspect schema: %w", err)
 	}
-	outSchema := SchemaWithFields(SchemaWithRelations(schema, job.Relations), job.Fields)
+	outSchema, err := DestinationSchema(ctx, src, schema, &job)
+	if err != nil {
+		return 0, 0, fmt.Errorf("destination schema: %w", err)
+	}
 	if err := dst.Prepare(ctx, job.DestinationTable, outSchema, json.RawMessage(job.Config)); err != nil {
 		return 0, 0, fmt.Errorf("prepare destination: %w", err)
 	}

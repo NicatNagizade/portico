@@ -33,6 +33,7 @@ function buildInitialConfig(config) {
       parsed.enable_nested_fields === undefined ? true : Boolean(parsed.enable_nested_fields),
     symbols_to_index: toArrayCsv(parsed.symbols_to_index),
     token_separators: toArrayCsv(parsed.token_separators),
+    apply_schema: Boolean(parsed.apply_schema),
   }
 }
 
@@ -250,12 +251,14 @@ export default function SyncJobForm({
       (initial?.fields || []).length > 0 ||
       (initial?.relations || []).length > 0 ||
       Boolean(initialConfig.default_sorting_field) ||
+      Boolean(initialConfig.apply_schema) ||
       (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length > 0) ||
       (Array.isArray(initialConfig.token_separators) && initialConfig.token_separators.length > 0),
   )
   const [showDestConfig, setShowDestConfig] = useState(
     () =>
       Boolean(initialConfig.default_sorting_field) ||
+      Boolean(initialConfig.apply_schema) ||
       (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length > 0) ||
       (Array.isArray(initialConfig.token_separators) && initialConfig.token_separators.length > 0) ||
       initialConfig.enable_nested_fields === false,
@@ -294,7 +297,9 @@ export default function SyncJobForm({
     const ruleCount = rules.filter((r) => r.field.trim()).length
     const fieldCount = fields.filter((f) => f.source_name.trim()).length
     const relationCount = relations.filter((r) => r.name.trim() && r.table.trim()).length
-    if (destinationType === 'typesense') parts.push('destination config')
+    if (destinationType === 'typesense' || destinationType === 'mongodb') {
+      parts.push('destination config')
+    }
     if (ruleCount) parts.push(`${ruleCount} rule${ruleCount === 1 ? '' : 's'}`)
     if (fieldCount) parts.push(`${fieldCount} field${fieldCount === 1 ? '' : 's'}`)
     if (relationCount) parts.push(`${relationCount} relation${relationCount === 1 ? '' : 's'}`)
@@ -322,6 +327,9 @@ export default function SyncJobForm({
         if (symbols.length) payloadConfig.symbols_to_index = symbols
         if (tokens.length) payloadConfig.token_separators = tokens
       }
+    }
+    if (destinationType === 'mongodb') {
+      payloadConfig.apply_schema = Boolean(config.apply_schema)
     }
 
     const keptRelations = keepRelations(relations)
@@ -519,6 +527,22 @@ export default function SyncJobForm({
                 </div>
               ) : null}
             </div>
+          </ButtonPanel>
+        ) : null}
+
+        {destinationType === 'mongodb' ? (
+          <ButtonPanel
+            title="Destination config"
+            description="Optional MongoDB options."
+            open={showDestConfig}
+            onToggle={setShowDestConfig}
+          >
+            <Toggle
+              checked={config.apply_schema}
+              onChange={(on) => setConfig((prev) => ({ ...prev, apply_schema: on }))}
+              label="Apply schema"
+              description="Create a JSON Schema validator on the destination collection from the mapped fields."
+            />
           </ButtonPanel>
         ) : null}
 

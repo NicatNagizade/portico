@@ -1,6 +1,6 @@
 .PHONY: help setup setup-backend setup-frontend \
 	api frontend test test-frontend build tidy swagger lint preview \
-	migrate-refresh import-connections example-migrate example-seed
+	migrate-refresh import-connections example-migrate example-migrate-truncate example-seed
 
 BACKEND := backend
 FRONTEND := frontend
@@ -53,9 +53,13 @@ migrate-refresh: ## DESTRUCTIVE: drop all app tables and re-run AutoMigrate
 import-connections: ## Upsert connections + sync jobs from backend/connections.json
 	cd $(BACKEND) && go run ./cmd/import-connections
 
-example-migrate: ## Create example Postgres DB + tables
+example-migrate: ## Create example DB + tables (Postgres/MySQL via DB_DATABASE)
 	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env
 	cd $(EXAMPLE) && go run . migrate
+
+example-migrate-truncate: ## DESTRUCTIVE: drop example tables, then recreate schema
+	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env
+	cd $(EXAMPLE) && go run . migrate --truncate
 
 example-seed: ## Seed fake users/posts/comments/reactions
 	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env

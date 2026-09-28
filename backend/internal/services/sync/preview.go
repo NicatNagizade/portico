@@ -331,7 +331,7 @@ func exploreColumns(schema *connectors.TableSchema, job *models.SyncJob, rows []
 	}
 
 	if schema != nil && job != nil {
-		out := SchemaWithFields(SchemaWithRelations(schema, job.Relations), job.Fields)
+		out := SchemaWithFields(SchemaWithRelations(schema, job.Relations, nil), job.Fields)
 		if out != nil {
 			for _, c := range out.Columns {
 				add(c.Name)

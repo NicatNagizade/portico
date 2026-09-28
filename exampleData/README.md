@@ -1,4 +1,4 @@
-# Example social dataset for Portico (Postgres)
+# Example social dataset for Portico (Postgres or MySQL)
 
 Generates a large fake dataset: users → posts → comments → reactions.
 
@@ -21,7 +21,7 @@ cp .env.example .env
 go mod tidy
 ```
 
-Requires a running Postgres you can connect to as `DB_USER`.
+Set `DB_DATABASE=postgres` (default) or `DB_DATABASE=mysql`. Requires a running server you can connect to as `DB_USER`.
 
 ## Commands
 
@@ -31,6 +31,9 @@ Exactly two commands:
 # 1) Create database (if not exists) + tables + indexes
 go run . migrate
 
+# Optional: drop existing example tables first, then recreate schema
+go run . migrate --truncate
+
 # 2) Truncate and load seed data
 go run . seed
 ```
@@ -39,8 +42,10 @@ Or from the repo root:
 
 ```bash
 make example-migrate
+make example-migrate-truncate   # drop tables first
 make example-seed
 ```
+
 
 ## Tuning
 
