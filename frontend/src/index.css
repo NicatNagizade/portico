@@ -178,6 +178,51 @@ a {
   animation-delay: 0.2s;
 }
 
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes landing-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+@keyframes landing-draw {
+  from {
+    stroke-dashoffset: 80;
+    opacity: 0.35;
+  }
+  to {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+.landing-float {
+  animation: landing-float 4.5s ease-in-out infinite;
+}
+
+.landing-pulse {
+  transform-origin: 360px 210px;
+  animation: landing-pulse 3.2s ease-in-out infinite;
+}
+
+.landing-draw {
+  stroke-dasharray: 80;
+  animation: landing-draw 1.4s ease-out both;
+}
+
 .skeleton {
   background: linear-gradient(
     90deg,

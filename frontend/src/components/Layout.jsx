@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet } from 'react-router-dom'
 
 const navItems = [
   {
@@ -72,7 +72,7 @@ export default function Layout() {
         <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-[var(--accent-soft)]/70 to-transparent" />
         <div className="relative flex flex-col gap-8 px-5 py-6 lg:sticky lg:top-0 lg:min-h-screen lg:px-6 lg:py-8">
           <div className="animate-fade-up">
-            <div className="flex items-center gap-3">
+            <Link to="/" className="flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--accent)] text-white shadow-[var(--shadow-md)]">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path
@@ -92,7 +92,7 @@ export default function Layout() {
                 </p>
                 <h1 className="text-xl font-semibold tracking-tight text-[var(--text)]">Portico</h1>
               </div>
-            </div>
+            </Link>
           </div>
 
           <nav className="animate-fade-up stagger-1 flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
