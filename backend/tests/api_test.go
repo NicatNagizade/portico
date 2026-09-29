@@ -20,6 +20,7 @@ import (
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/db"
 	"github.com/portico/backend/internal/handlers"
+	"github.com/portico/backend/internal/llm"
 	"github.com/portico/backend/internal/models"
 	"github.com/portico/backend/internal/router"
 	"github.com/portico/backend/internal/secretbox"
@@ -49,6 +50,20 @@ func setupRouter(t *testing.T, gdb *gorm.DB, registry *connectors.Registry) *gin
 		synclog.NewService(gdb),
 		syncsvc.NewOrchestrator(gdb, registry),
 		registry,
+		nil,
+	)
+	return router.New(h)
+}
+
+func setupRouterWithLLM(t *testing.T, gdb *gorm.DB, registry *connectors.Registry, completer llm.Completer) *gin.Engine {
+	t.Helper()
+	h := handlers.New(
+		connection.NewService(gdb),
+		syncjob.NewService(gdb),
+		synclog.NewService(gdb),
+		syncsvc.NewOrchestrator(gdb, registry),
+		registry,
+		completer,
 	)
 	return router.New(h)
 }
@@ -72,6 +87,27 @@ func TestHealth(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("status=%v", body["status"])
+	}
+	if body["ai_enabled"] != false {
+		t.Fatalf("expected ai_enabled=false without LLM, got %v", body["ai_enabled"])
+	}
+
+	rAI := setupRouterWithLLM(t, gdb, connectors.NewRegistry(), &stubCompleter{})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	rAI.ServeHTTP(w, req)
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["ai_enabled"] != true {
+		t.Fatalf("expected ai_enabled=true with LLM, got %v", body["ai_enabled"])
 	}
 }
 

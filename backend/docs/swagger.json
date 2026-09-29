@@ -723,6 +723,71 @@
                 }
             }
         },
+        "/sync-jobs/{id}/explore/suggest": {
+            "post": {
+                "description": "Uses an OpenAI-compatible model to turn a natural-language request into explore filters and visible columns. Requires OPENAI_API_KEY.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync-jobs"
+                ],
+                "summary": "AI suggest explore filters and fields",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Prompt and available field names",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ExploreSuggestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/llm.ExploreSuggestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sync-jobs/{id}/run": {
             "post": {
                 "description": "Runs the sync synchronously and returns the finished sync log.",
@@ -1086,6 +1151,42 @@
                 }
             }
         },
+        "handlers.ExploreSuggestRequest": {
+            "type": "object",
+            "required": [
+                "prompt"
+            ],
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "id",
+                        "name",
+                        "email",
+                        "status"
+                    ]
+                },
+                "filter_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "id",
+                        "name",
+                        "status",
+                        "email"
+                    ]
+                },
+                "prompt": {
+                    "type": "string",
+                    "example": "active users named john; show id name email"
+                }
+            }
+        },
         "handlers.SyncJobListResponse": {
             "type": "object",
             "properties": {
@@ -1137,6 +1238,37 @@
                 "total_pages": {
                     "type": "integer",
                     "example": 5
+                }
+            }
+        },
+        "llm.ExploreSuggestResult": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/llm.Filter"
+                    }
+                }
+            }
+        },
+        "llm.Filter": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
                 }
             }
         },

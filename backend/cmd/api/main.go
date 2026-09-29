@@ -8,6 +8,7 @@ import (
 	"github.com/portico/backend/internal/connectors/register"
 	"github.com/portico/backend/internal/db"
 	"github.com/portico/backend/internal/handlers"
+	"github.com/portico/backend/internal/llm"
 	"github.com/portico/backend/internal/router"
 	"github.com/portico/backend/internal/secretbox"
 	"github.com/portico/backend/internal/services/connection"
@@ -41,7 +42,8 @@ func main() {
 	jobSvc := syncjob.NewService(gdb)
 	logSvc := synclog.NewService(gdb)
 	orch := sync.NewOrchestrator(gdb, registry)
-	h := handlers.New(connSvc, jobSvc, logSvc, orch, registry)
+	ai := llm.NewClient(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.OpenAIModel)
+	h := handlers.New(connSvc, jobSvc, logSvc, orch, registry, ai)
 
 	r := router.New(h)
 	log.Printf("listening on %s", cfg.HTTPAddr)

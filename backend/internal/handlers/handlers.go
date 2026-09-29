@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/portico/backend/internal/connectors"
+	"github.com/portico/backend/internal/llm"
 	"github.com/portico/backend/internal/models"
 	"github.com/portico/backend/internal/services/connection"
 	"github.com/portico/backend/internal/services/sync"
@@ -23,6 +24,7 @@ type Handlers struct {
 	SyncLogs    *synclog.Service
 	Sync        *sync.Orchestrator
 	Registry    *connectors.Registry
+	LLM         llm.Completer // nil when OPENAI_API_KEY is unset
 }
 
 func New(
@@ -31,6 +33,7 @@ func New(
 	syncLogs *synclog.Service,
 	orch *sync.Orchestrator,
 	registry *connectors.Registry,
+	completer llm.Completer,
 ) *Handlers {
 	return &Handlers{
 		Connections: connections,
@@ -38,6 +41,7 @@ func New(
 		SyncLogs:    syncLogs,
 		Sync:        orch,
 		Registry:    registry,
+		LLM:         completer,
 	}
 }
 
@@ -104,8 +108,11 @@ func writeErr(c *gin.Context, err error, notFound error) {
 // @Summary Health check
 // @Tags health
 // @Produce json
-// @Success 200 {object} map[string]string
+// @Success 200 {object} map[string]any
 // @Router /health [get]
 func (h *Handlers) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	c.JSON(http.StatusOK, gin.H{
+		"status":     "ok",
+		"ai_enabled": h.LLM != nil,
+	})
 }

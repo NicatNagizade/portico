@@ -37,6 +37,9 @@ Upserts connections by `(name, type)` and sync jobs by `name`. Jobs reference co
 | `DB_NAME` | App DB name | `portico` |
 | `DB_SSLMODE` | SSL mode | `disable` |
 | `APP_KEY` | Encrypts connection secrets at rest (not stored in DB). Empty = dev key. | |
+| `OPENAI_API_KEY` | Optional. Enables Explore → Ask AI (OpenAI-compatible). | |
+| `OPENAI_BASE_URL` | Optional chat API base (e.g. OpenRouter). | `https://api.openai.com/v1` |
+| `OPENAI_MODEL` | Optional model id. | `gpt-4o-mini` |
 | `CONNECTIONS_FILE` | Path for `import-connections` | `connections.json` |
 
 ## Swagger
@@ -59,6 +62,7 @@ CGO_ENABLED=1 go test ./tests/...
 - `GET/POST /connections`, `GET/PUT/DELETE /connections/:id`
 - `GET/POST /sync-jobs`, `GET/PUT/DELETE /sync-jobs/:id`
 - `POST /sync-jobs/:id/run`
+- `POST /sync-jobs/:id/explore`, `/explore/suggest`, `/explore/export`
 - `GET /sync-logs`, `GET /sync-logs/:id`
 - `GET /health`
 

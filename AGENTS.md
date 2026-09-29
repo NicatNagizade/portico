@@ -69,7 +69,7 @@ These come from how this project is built day to day. Prefer them over “clever
 - Swagger: update swag comments → `make swagger` → **JSON only** (`backend/docs/swagger.json`). UI at `/api/documentation`.
 - Status-like columns: store as tinyint/int in DB; map meanings in Go/JS constants — no DB enum constraints.
 - Prefer ON DELETE CASCADE (or equivalent) for parent→child rows (e.g. sync job → sync logs) so deletes work without manual cleanup.
-- Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR`.
+- Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR`, optional `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` (explore Ask AI).
 
 ### Frontend
 

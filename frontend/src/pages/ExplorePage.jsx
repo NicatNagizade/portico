@@ -6,6 +6,8 @@ import {
   getSyncJob,
   listSyncJobs,
 } from '../api/syncJobs'
+import { getHealth } from '../api/health'
+import ExploreAISuggest from '../components/forms/ExploreAISuggest'
 import ExploreFields from '../components/forms/ExploreFields'
 import ExploreFilters from '../components/forms/ExploreFilters'
 import {
@@ -148,6 +150,19 @@ function ColumnsIcon() {
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M5 5h4v14H5V5Zm10 0h4v14h-4V5ZM11 5h2v14h-2V5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function SparkleIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 3l1.2 4.8L18 9l-4.8 1.2L12 15l-1.2-4.8L6 9l4.8-1.2L12 3Zm7 10 .7 2.3L22 16l-2.3.7L19 19l-.7-2.3L16 16l2.3-.7L19 13ZM5 14l.6 1.9L7.5 16.5 5.6 17 5 19l-.6-2L2.5 16.5 4.4 15.9 5 14Z"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinejoin="round"
@@ -395,6 +410,8 @@ export default function ExplorePage() {
   const [selectedFields, setSelectedFields] = useState(null) // null = show all
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [fieldsOpen, setFieldsOpen] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiEnabled, setAiEnabled] = useState(false)
   const [preview, setPreview] = useState(resetPreviewState)
   const [queryLoading, setQueryLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -423,6 +440,7 @@ export default function ExplorePage() {
     setSelectedFields(null)
     setFiltersOpen(false)
     setFieldsOpen(false)
+    setAiOpen(false)
   }
 
   useEffect(() => {
@@ -431,8 +449,14 @@ export default function ExplorePage() {
       setJobsLoading(true)
       setError('')
       try {
-        const data = await listSyncJobs({ page: 1, pageSize: JOB_LIST_SIZE })
-        if (!cancelled) setJobs(data?.items || [])
+        const [data, health] = await Promise.all([
+          listSyncJobs({ page: 1, pageSize: JOB_LIST_SIZE }),
+          getHealth().catch(() => null),
+        ])
+        if (!cancelled) {
+          setJobs(data?.items || [])
+          setAiEnabled(!!health?.ai_enabled)
+        }
       } catch (err) {
         if (!cancelled) setError(err.message || 'Failed to load sync jobs')
       } finally {
@@ -577,6 +601,23 @@ export default function ExplorePage() {
   function openFields() {
     if (schemaTable) ensureColumns(schemaTable)
     setFieldsOpen(true)
+  }
+
+  function openAI() {
+    prefetchFilterFields()
+    if (schemaTable) ensureColumns(schemaTable)
+    setAiOpen(true)
+  }
+
+  function applyAISuggest({ filters: nextFilters, fields: nextFields }) {
+    setFilters(
+      (nextFilters || []).map((f) => ({
+        field: f.field || '',
+        operator: f.operator || 'eq',
+        value: f.value ?? '',
+      })),
+    )
+    setSelectedFields(nextFields === undefined ? null : nextFields)
   }
 
   function removeFilterAt(index) {
@@ -737,6 +778,13 @@ export default function ExplorePage() {
                     detail={fieldsDetail}
                     onClick={openFields}
                   />
+                  {aiEnabled ? (
+                    <RefineButton
+                      icon={<SparkleIcon />}
+                      label="Ask AI"
+                      onClick={openAI}
+                    />
+                  ) : null}
                 </div>
               </div>
 
@@ -967,6 +1015,15 @@ export default function ExplorePage() {
               onChange={setSelectedFields}
             />
           </Dialog>
+
+          <ExploreAISuggest
+            open={aiEnabled && aiOpen}
+            onClose={() => setAiOpen(false)}
+            jobId={jobId}
+            filterFields={filterFieldOptions}
+            fields={selectableFields}
+            onApply={applyAISuggest}
+          />
 
           <RowDetailDialog
             row={selectedRow}

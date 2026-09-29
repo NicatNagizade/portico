@@ -77,7 +77,7 @@ Field order in models: `rows_total` before `rows_synced` — trust the model, do
 
 **When:** handlers, migrations, env, docs.
 
-- Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR` — never `DATABASE_URL`.
+- Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR` — never `DATABASE_URL`. Optional explore Ask AI: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` (OpenAI-compatible).
 - Create the app database on migrate if it does not exist.
 - Refresh schema (destructive): `make migrate-refresh` drops all app tables and re-runs AutoMigrate.
 - Status columns: int/tinyint in DB; constants in code — no DB enum constraints.
