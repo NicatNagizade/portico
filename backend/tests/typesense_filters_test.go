@@ -11,7 +11,7 @@ import (
 func TestBuildFilterBy(t *testing.T) {
 	got, ok := typesense.BuildFilterBy([]connectors.Filter{
 		{Column: "email", Operator: models.RuleOperatorEq, Value: "user_99995@example.com"},
-	})
+	}, "")
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -23,7 +23,7 @@ func TestBuildFilterBy(t *testing.T) {
 	got, ok = typesense.BuildFilterBy([]connectors.Filter{
 		{Column: "status", Operator: models.RuleOperatorIn, Value: "a, b"},
 		{Column: "client_id", Operator: models.RuleOperatorGt, Value: "10"},
-	})
+	}, "")
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -34,7 +34,7 @@ func TestBuildFilterBy(t *testing.T) {
 
 	got, ok = typesense.BuildFilterBy([]connectors.Filter{
 		{Column: "id", Operator: models.RuleOperatorLt, Value: "10"},
-	})
+	}, "")
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -45,7 +45,7 @@ func TestBuildFilterBy(t *testing.T) {
 
 	got, ok = typesense.BuildFilterBy([]connectors.Filter{
 		{Column: "id", Operator: models.RuleOperatorEq, Value: "42"},
-	})
+	}, "")
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -56,7 +56,7 @@ func TestBuildFilterBy(t *testing.T) {
 
 	_, ok = typesense.BuildFilterBy([]connectors.Filter{
 		{Column: "name", Operator: models.RuleOperatorLike, Value: "%ada%"},
-	})
+	}, "")
 	if ok {
 		t.Fatal("like should not push server-side")
 	}

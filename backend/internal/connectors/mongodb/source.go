@@ -109,7 +109,7 @@ func (s *Source) schemaFromCollectionValidator(ctx context.Context, table string
 }
 
 func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
-	filter, err := BuildFilter(filters)
+	filter, err := BuildFilter(filters, SortableIDField)
 	if err != nil {
 		return 0, err
 	}
@@ -124,7 +124,7 @@ func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, fi
 	if chunkSize <= 0 {
 		chunkSize = 500
 	}
-	filter, err := BuildFilter(filters)
+	filter, err := BuildFilter(filters, SortableIDField)
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, fi
 		if err := cur.Decode(&raw); err != nil {
 			return fmt.Errorf("mongodb decode: %w", err)
 		}
-		batch = append(batch, DocFromRead(bsonMToMap(raw)))
+		batch = append(batch, DocFromRead(bsonMToMap(raw), SortableIDField))
 		if len(batch) >= chunkSize {
 			if err := fn(batch); err != nil {
 				return err
@@ -165,7 +165,7 @@ func (s *Source) Query(ctx context.Context, table string, columns []string, filt
 		offset = 0
 	}
 
-	filter, err := BuildFilter(filters)
+	filter, err := BuildFilter(filters, SortableIDField)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func (s *Source) Query(ctx context.Context, table string, columns []string, filt
 	}
 	defer cur.Close(ctx)
 
-	rows, err := decodeDocs(cur, ctx)
+	rows, err := decodeDocs(cur, ctx, SortableIDField)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (s *Source) QueryRows(ctx context.Context, table string, columns []string, 
 	}
 	defer cur.Close(ctx)
 
-	rows, err := decodeDocs(cur, ctx)
+	rows, err := decodeDocs(cur, ctx, SortableIDField)
 	if err != nil {
 		return nil, err
 	}
@@ -226,5 +226,5 @@ func (s *Source) loadDocs(ctx context.Context, table string, limit int64) ([]map
 		return nil, fmt.Errorf("mongodb find %q: %w", table, err)
 	}
 	defer cur.Close(ctx)
-	return decodeDocs(cur, ctx)
+	return decodeDocs(cur, ctx, SortableIDField)
 }

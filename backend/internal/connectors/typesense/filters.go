@@ -11,7 +11,11 @@ import (
 
 // BuildFilterBy maps Portico filters to a Typesense filter_by clause.
 // ok is false when any filter cannot be pushed server-side (caller should fall back).
-func BuildFilterBy(filters []connectors.Filter) (filterBy string, ok bool) {
+// sortableID is the numeric companion of "id" (default id_int).
+func BuildFilterBy(filters []connectors.Filter, sortableID string) (filterBy string, ok bool) {
+	if sortableID == "" {
+		sortableID = SortableIDField
+	}
 	if len(filters) == 0 {
 		return "", true
 	}
@@ -21,7 +25,7 @@ func BuildFilterBy(filters []connectors.Filter) (filterBy string, ok bool) {
 		if col == "" {
 			return "", false
 		}
-		part, partOK := filterClause(col, f.Operator, f.Value)
+		part, partOK := filterClause(col, f.Operator, f.Value, sortableID)
 		if !partOK {
 			return "", false
 		}
@@ -30,8 +34,8 @@ func BuildFilterBy(filters []connectors.Filter) (filterBy string, ok bool) {
 	return strings.Join(parts, " && "), true
 }
 
-func filterClause(col, op, value string) (string, bool) {
-	col = docutil.IDFilterColumn(col, op, col, SortableIDField)
+func filterClause(col, op, value, sortableID string) (string, bool) {
+	col = docutil.IDFilterColumn(col, op, col, sortableID)
 	switch op {
 	case models.RuleOperatorEq:
 		return col + ":=" + quoteFilterValue(value), true

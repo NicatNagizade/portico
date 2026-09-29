@@ -203,9 +203,17 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 	if err != nil {
 		return 0, 0, fmt.Errorf("introspect schema: %w", err)
 	}
+	schema, err = EffectiveSourceSchema(schema, json.RawMessage(job.Config))
+	if err != nil {
+		return 0, 0, err
+	}
 	outSchema, err := DestinationSchema(ctx, src, schema, &job)
 	if err != nil {
 		return 0, 0, fmt.Errorf("destination schema: %w", err)
+	}
+	outSchema, err = EffectiveDestinationSchema(outSchema, json.RawMessage(job.Config))
+	if err != nil {
+		return 0, 0, err
 	}
 	if err := dst.Prepare(ctx, job.DestinationTable, outSchema, json.RawMessage(job.Config)); err != nil {
 		return 0, 0, fmt.Errorf("prepare destination: %w", err)
@@ -253,7 +261,11 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 		start := rowIndex.Add(int64(len(batch))) - int64(len(batch))
 
 		g.Go(func() error {
-			connectors.EnsureID(batch, schema, start)
+			pk, err := PrimaryKeyFromConfig(json.RawMessage(job.Config))
+			if err != nil {
+				return err
+			}
+			connectors.EnsureID(batch, schema, start, pk.Destination)
 			ApplyFields(batch, job.Fields)
 			if err := dst.WriteBatch(gctx, job.DestinationTable, batch); err != nil {
 				return err

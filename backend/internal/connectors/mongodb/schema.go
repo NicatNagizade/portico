@@ -13,35 +13,63 @@ import (
 // CollectionConfig is MongoDB-specific options from sync_jobs.config.
 // Omitted fields keep connector defaults (no schema validator).
 type CollectionConfig struct {
-	ApplySchema bool `json:"apply_schema"`
+	ApplySchema   bool   `json:"apply_schema"`
+	PrimaryKeyInt string `json:"primary_key_int,omitempty"` // legacy; prefer primary_key.int
+
+	pk connectors.PrimaryKeyConfig
+}
+
+// SortableID returns the numeric companion field name, or "" when disabled.
+func (c *CollectionConfig) SortableID() string {
+	if c == nil {
+		return SortableIDField
+	}
+	if c.pk.Configured {
+		return c.pk.Int
+	}
+	if c.PrimaryKeyInt != "" {
+		return c.PrimaryKeyInt
+	}
+	if c.pk.Int != "" {
+		return c.pk.Int
+	}
+	return SortableIDField
 }
 
 // ParseCollectionConfig decodes MongoDB collection options from sync job config JSON.
 func ParseCollectionConfig(raw json.RawMessage) (*CollectionConfig, error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
+		return &CollectionConfig{pk: connectors.PrimaryKeyConfig{Int: SortableIDField}}, nil
 	}
 	var cfg CollectionConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("parse mongodb collection config: %w", err)
 	}
+	cfg.PrimaryKeyInt = strings.TrimSpace(cfg.PrimaryKeyInt)
+	pk, err := connectors.ParsePrimaryKeyConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	cfg.pk = pk
 	return &cfg, nil
 }
 
 // BuildValidator maps a Portico table schema to a MongoDB $jsonSchema validator.
 // Portico "id" becomes MongoDB "_id" (always string — EnsureID stringifies before write).
-// A numeric id_int companion is added for sorting (same pattern as Typesense).
+// A numeric companion (default id_int) is added for sorting (same pattern as Typesense).
 // Nested Columns (relations) become object properties or array items.
 // Null is allowed on every property. SQL timestamps arrive as time.Time → BSON date.
-func BuildValidator(schema *connectors.TableSchema) (bson.M, error) {
+func BuildValidator(schema *connectors.TableSchema, sortableID string) (bson.M, error) {
 	if schema == nil || len(schema.Columns) == 0 {
 		return nil, fmt.Errorf("mongodb apply_schema: table schema is required")
 	}
-	props := propertiesFromColumns(schema.Columns, true)
+	props := propertiesFromColumns(schema.Columns, true, sortableID)
 	if len(props) == 0 {
 		return nil, fmt.Errorf("mongodb apply_schema: table schema has no columns")
 	}
-	props[SortableIDField] = bson.M{"bsonType": []string{"int", "long", "null"}}
+	if sortableID != "" {
+		props[sortableID] = bson.M{"bsonType": []string{"int", "long", "null"}}
+	}
 	return bson.M{
 		"$jsonSchema": bson.M{
 			"bsonType":   "object",
@@ -228,10 +256,13 @@ func bsonTypeList(v any) []string {
 
 // propertiesFromColumns builds JSON Schema properties.
 // When root is true, Portico "id" is emitted as MongoDB "_id" (string).
-func propertiesFromColumns(cols []connectors.ColumnSchema, root bool) bson.M {
+func propertiesFromColumns(cols []connectors.ColumnSchema, root bool, sortableID string) bson.M {
+	if sortableID == "" {
+		sortableID = SortableIDField
+	}
 	props := bson.M{}
 	for _, col := range cols {
-		if col.Name == "" || col.Name == SortableIDField {
+		if col.Name == "" || col.Name == sortableID {
 			continue
 		}
 		if root && col.Name == "id" {
@@ -247,13 +278,13 @@ func columnValidator(col connectors.ColumnSchema) bson.M {
 	switch col.Type {
 	case connectors.FieldTypeObject:
 		m := bson.M{"bsonType": []string{"object", "null"}}
-		if nested := propertiesFromColumns(col.Columns, false); len(nested) > 0 {
+		if nested := propertiesFromColumns(col.Columns, false, ""); len(nested) > 0 {
 			m["properties"] = nested
 		}
 		return m
 	case connectors.FieldTypeObjectArray:
 		item := bson.M{"bsonType": "object"}
-		if nested := propertiesFromColumns(col.Columns, false); len(nested) > 0 {
+		if nested := propertiesFromColumns(col.Columns, false, ""); len(nested) > 0 {
 			item["properties"] = nested
 		}
 		return bson.M{

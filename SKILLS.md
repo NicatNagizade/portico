@@ -53,6 +53,7 @@ New connectors land the same way — package under `connectors/<name>/` + regist
 - Empty foreign/related keys → fall back to the related field name.
 - Emit related rows as arrays / nested objects in the destination document — not SQL joins that flatten many-to-many.
 - Job `config` = destination-global; field destination config = per-field (facet, sort, etc. for Typesense).
+- Optional `config.primary_key` maps source column(s) → destination key (default `id`). Accepts `"uid"`, `["user_id","post_id"]`, or `{ "source": [...], "destination": "id", "int": "id_int" }`. Multiple sources are joined with `_`. Omit when the default `id` is enough. Optional `int` (Typesense/Mongo) creates a numeric companion for sorting; omit `int` to skip it. Legacy `primary_key_int` still works.
 
 ---
 

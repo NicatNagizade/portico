@@ -12,7 +12,7 @@ import (
 func TestMongoBuildFilter(t *testing.T) {
 	got, err := mongodb.BuildFilter([]connectors.Filter{
 		{Column: "email", Operator: models.RuleOperatorEq, Value: "user@example.com"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestMongoBuildFilter(t *testing.T) {
 	got, err = mongodb.BuildFilter([]connectors.Filter{
 		{Column: "id", Operator: models.RuleOperatorEq, Value: "42"},
 		{Column: "status", Operator: models.RuleOperatorIn, Value: "a, b"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestMongoBuildFilter(t *testing.T) {
 
 	got, err = mongodb.BuildFilter([]connectors.Filter{
 		{Column: "id", Operator: models.RuleOperatorLt, Value: "10"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestMongoBuildFilter(t *testing.T) {
 
 	got, err = mongodb.BuildFilter([]connectors.Filter{
 		{Column: "name", Operator: models.RuleOperatorLike, Value: "%ada%"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestMongoBuildFilter(t *testing.T) {
 
 	got, err = mongodb.BuildFilter([]connectors.Filter{
 		{Column: "deleted_at", Operator: models.RuleOperatorIsNull},
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestMongoBuildFilter(t *testing.T) {
 	got, err = mongodb.BuildFilter([]connectors.Filter{
 		{Column: "posts.title", Operator: models.RuleOperatorEq, Value: "hello"},
 		{Column: "posts.comments.body", Operator: models.RuleOperatorLike, Value: "%hi%"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestMongoBuildFilter(t *testing.T) {
 
 	if _, err := mongodb.BuildFilter([]connectors.Filter{
 		{Column: "", Operator: models.RuleOperatorEq, Value: "x"},
-	}); err == nil {
+	}, ""); err == nil {
 		t.Fatal("expected empty field error")
 	}
 }

@@ -8,6 +8,17 @@ import (
 	"github.com/portico/backend/internal/models"
 )
 
+// DefaultSortableIDField is the numeric companion of document "id" for sort/filter.
+const DefaultSortableIDField = "id_int"
+
+// SortableIDFieldName returns the configured companion field, or DefaultSortableIDField.
+func SortableIDFieldName(primaryKeyInt string) string {
+	if s := strings.TrimSpace(primaryKeyInt); s != "" {
+		return s
+	}
+	return DefaultSortableIDField
+}
+
 // ParseInt64 parses v as a base-10 int64 (nil / non-numeric → false).
 func ParseInt64(v any) (int64, bool) {
 	if v == nil {

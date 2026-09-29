@@ -59,7 +59,7 @@ func TestMongoBuildURI(t *testing.T) {
 }
 
 func TestMongoDocForWriteAndFromRead(t *testing.T) {
-	got := mongodb.DocForWrite(map[string]any{"id": "42", "name": "Ada"})
+	got := mongodb.DocForWrite(map[string]any{"id": "42", "name": "Ada"}, mongodb.SortableIDField)
 	if got["_id"] != "42" {
 		t.Fatalf("_id=%v, want string 42", got["_id"])
 	}
@@ -73,7 +73,7 @@ func TestMongoDocForWriteAndFromRead(t *testing.T) {
 		t.Fatalf("name=%v", got["name"])
 	}
 
-	nonNumeric := mongodb.DocForWrite(map[string]any{"id": "abc", "name": "Bob"})
+	nonNumeric := mongodb.DocForWrite(map[string]any{"id": "abc", "name": "Bob"}, mongodb.SortableIDField)
 	if nonNumeric["_id"] != "abc" {
 		t.Fatalf("_id=%v, want abc", nonNumeric["_id"])
 	}
@@ -84,7 +84,7 @@ func TestMongoDocForWriteAndFromRead(t *testing.T) {
 	oid := bson.NewObjectID()
 	round := mongodb.DocFromRead(map[string]any{
 		"_id": oid, "name": "Ada", mongodb.SortableIDField: int64(1),
-	})
+	}, mongodb.SortableIDField)
 	if round["id"] != oid.Hex() {
 		t.Fatalf("id=%v, want hex %s", round["id"], oid.Hex())
 	}
@@ -114,7 +114,7 @@ func TestMongoNewDestination(t *testing.T) {
 
 func TestMongoParseCollectionConfig(t *testing.T) {
 	cfg, err := mongodb.ParseCollectionConfig(nil)
-	if err != nil || cfg != nil {
+	if err != nil || cfg == nil || cfg.SortableID() != mongodb.SortableIDField {
 		t.Fatalf("nil config: cfg=%v err=%v", cfg, err)
 	}
 	cfg, err = mongodb.ParseCollectionConfig([]byte(`{"apply_schema":true}`))
@@ -160,7 +160,7 @@ func TestMongoBuildValidator(t *testing.T) {
 			{Name: "score", Type: connectors.FieldTypeFloat64},
 		},
 	}
-	validator, err := mongodb.BuildValidator(schema)
+	validator, err := mongodb.BuildValidator(schema, mongodb.SortableIDField)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,10 +234,10 @@ func TestMongoBuildValidator(t *testing.T) {
 	if _, ok := commentProps["reactions"]; !ok {
 		t.Fatalf("expected reactions under comments, got %#v", commentProps)
 	}
-	if _, err := mongodb.BuildValidator(nil); err == nil {
+	if _, err := mongodb.BuildValidator(nil, ""); err == nil {
 		t.Fatal("expected error for nil schema")
 	}
-	if _, err := mongodb.BuildValidator(&connectors.TableSchema{}); err == nil {
+	if _, err := mongodb.BuildValidator(&connectors.TableSchema{}, ""); err == nil {
 		t.Fatal("expected error for empty schema")
 	}
 

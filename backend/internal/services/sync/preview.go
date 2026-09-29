@@ -194,6 +194,10 @@ func (o *Orchestrator) previewSource(ctx context.Context, job *models.SyncJob, l
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("introspect schema: %w", err)
 	}
+	schema, err = EffectiveSourceSchema(schema, json.RawMessage(job.Config))
+	if err != nil {
+		return nil, nil, 0, err
+	}
 
 	displayOrder := order
 	sourceOrder, err := resolveSourceOrder(schema, job.Fields, order)
@@ -234,7 +238,11 @@ func (o *Orchestrator) previewSource(ctx context.Context, job *models.SyncJob, l
 	if err := enrichDocs(ctx, src, job, schema, docs); err != nil {
 		return nil, nil, 0, err
 	}
-	connectors.EnsureID(docs, schema, int64(offset))
+	pk, err := PrimaryKeyFromConfig(json.RawMessage(job.Config))
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	connectors.EnsureID(docs, schema, int64(offset), pk.Destination)
 	ApplyFields(docs, job.Fields)
 	return docs, exploreColumns(schema, job, docs), total, nil
 }
@@ -256,7 +264,11 @@ func previewSourceNested(
 		if err := enrichDocs(ctx, src, job, schema, docs); err != nil {
 			return err
 		}
-		connectors.EnsureID(docs, schema, 0)
+		pk, err := PrimaryKeyFromConfig(json.RawMessage(job.Config))
+		if err != nil {
+			return err
+		}
+		connectors.EnsureID(docs, schema, 0, pk.Destination)
 		ApplyFields(docs, job.Fields)
 		matched = append(matched, docutil.FilterRows(docs, nestedFilters)...)
 		return nil
@@ -444,6 +456,12 @@ func (o *Orchestrator) previewDestination(ctx context.Context, job *models.SyncJ
 	}
 	defer reader.Close()
 
+	if cfg, ok := dst.(interface{ ApplyJobConfig(json.RawMessage) error }); ok {
+		if err := cfg.ApplyJobConfig(json.RawMessage(job.Config)); err != nil {
+			return nil, nil, 0, err
+		}
+	}
+
 	rows, total, err := reader.Query(ctx, job.DestinationTable, filters, limit, offset, order)
 	if err != nil {
 		return nil, nil, 0, err
@@ -466,6 +484,10 @@ func (o *Orchestrator) sourceSchema(ctx context.Context, job *models.SyncJob) *c
 	}
 	defer src.Close()
 	schema, err := src.Schema(ctx, job.SourceTable)
+	if err != nil {
+		return nil
+	}
+	schema, err = EffectiveSourceSchema(schema, json.RawMessage(job.Config))
 	if err != nil {
 		return nil
 	}

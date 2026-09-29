@@ -147,8 +147,12 @@ func (r *Registry) Check(ctx context.Context, conn *models.Connection) error {
 	return fmt.Errorf("no connector registered for type %q", conn.Type)
 }
 
-// EnsureID sets document id as a string from existing id, primary key, or row index.
-func EnsureID(docs []map[string]any, schema *TableSchema, startIndex int64) {
+// EnsureID sets the destination document key from primary key columns, existing id, or row index.
+// destField defaults to "id". Multiple primary-key columns are joined with "_".
+func EnsureID(docs []map[string]any, schema *TableSchema, startIndex int64, destField string) {
+	if strings.TrimSpace(destField) == "" {
+		destField = "id"
+	}
 	var pkCols []string
 	for _, c := range schema.Columns {
 		if c.PrimaryKey {
@@ -156,18 +160,36 @@ func EnsureID(docs []map[string]any, schema *TableSchema, startIndex int64) {
 		}
 	}
 	for i, doc := range docs {
-		if id, ok := doc["id"]; ok && id != nil && fmt.Sprint(id) != "" {
-			doc["id"] = fmt.Sprint(id)
-			continue
-		}
 		if len(pkCols) > 0 {
 			parts := make([]string, 0, len(pkCols))
 			for _, pk := range pkCols {
 				parts = append(parts, fmt.Sprint(doc[pk]))
 			}
-			doc["id"] = strings.Join(parts, "_")
+			doc[destField] = strings.Join(parts, "_")
+			// Document stores (Typesense/Mongo/Redis) always key on "id".
+			if destField != "id" {
+				doc["id"] = doc[destField]
+			}
 			continue
 		}
-		doc["id"] = fmt.Sprintf("%d", startIndex+int64(i))
+		if id, ok := doc[destField]; ok && id != nil && fmt.Sprint(id) != "" {
+			doc[destField] = fmt.Sprint(id)
+			if destField != "id" {
+				doc["id"] = doc[destField]
+			}
+			continue
+		}
+		if id, ok := doc["id"]; ok && id != nil && fmt.Sprint(id) != "" {
+			doc["id"] = fmt.Sprint(id)
+			if destField != "id" {
+				doc[destField] = doc["id"]
+			}
+			continue
+		}
+		synthetic := fmt.Sprintf("%d", startIndex+int64(i))
+		doc[destField] = synthetic
+		if destField != "id" {
+			doc["id"] = synthetic
+		}
 	}
 }

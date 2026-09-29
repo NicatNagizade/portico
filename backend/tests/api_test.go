@@ -2194,9 +2194,18 @@ func TestEnsureID(t *testing.T) {
 	docs := []map[string]any{
 		{"uid": 10, "name": "x"},
 	}
-	connectors.EnsureID(docs, schema, 0)
+	connectors.EnsureID(docs, schema, 0, "id")
 	if docs[0]["id"] != "10" {
 		t.Fatalf("expected id 10, got %v", docs[0]["id"])
+	}
+
+	// Primary key wins over an existing id column when it is not the PK.
+	docs = []map[string]any{
+		{"id": 99, "uid": 10, "name": "x"},
+	}
+	connectors.EnsureID(docs, schema, 0, "id")
+	if docs[0]["id"] != "10" {
+		t.Fatalf("expected PK uid to override id, got %v", docs[0]["id"])
 	}
 }
 

@@ -20,9 +20,9 @@ import (
 // Shorter than the driver's 30s default so unreachable hosts fail quickly on check/Open.
 const connectTimeout = 2 * time.Second
 
-// SortableIDField holds a numeric copy of document id for sorting.
-// MongoDB "_id" is always a string document key (Portico "id"); id_int is the int companion.
-const SortableIDField = "id_int"
+// SortableIDField is the default numeric companion of document id for sorting.
+// MongoDB "_id" is always a string document key (Portico "id"); override with primary_key_int.
+const SortableIDField = connectors.DefaultSortableIDField
 
 type Config struct {
 	Host       string `json:"host"`
@@ -34,9 +34,10 @@ type Config struct {
 }
 
 type Destination struct {
-	cfg    Config
-	client *mongo.Client
-	db     *mongo.Database
+	cfg        Config
+	client     *mongo.Client
+	db         *mongo.Database
+	sortableID string
 }
 
 func NewDestination(conn *models.Connection) (connectors.DestinationWriter, error) {
@@ -44,7 +45,7 @@ func NewDestination(conn *models.Connection) (connectors.DestinationWriter, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Destination{cfg: cfg}, nil
+	return &Destination{cfg: cfg, sortableID: SortableIDField}, nil
 }
 
 func ParseConfig(raw json.RawMessage) (Config, error) {
@@ -134,10 +135,11 @@ func (d *Destination) Prepare(ctx context.Context, name string, schema *connecto
 	if err != nil {
 		return err
 	}
-	if cfg == nil || !cfg.ApplySchema {
+	d.sortableID = cfg.SortableID()
+	if !cfg.ApplySchema {
 		return nil
 	}
-	validator, err := BuildValidator(schema)
+	validator, err := BuildValidator(schema, d.sortableID)
 	if err != nil {
 		return err
 	}
@@ -148,13 +150,31 @@ func (d *Destination) Prepare(ctx context.Context, name string, schema *connecto
 	return nil
 }
 
+// ApplyJobConfig sets sync-job destination options (e.g. primary_key_int) for explore/Query.
+func (d *Destination) ApplyJobConfig(raw json.RawMessage) error {
+	cfg, err := ParseCollectionConfig(raw)
+	if err != nil {
+		return err
+	}
+	d.sortableID = cfg.SortableID()
+	return nil
+}
+
+func (d *Destination) sortableIDField() string {
+	if d != nil {
+		return d.sortableID
+	}
+	return SortableIDField
+}
+
 func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[string]any) error {
 	if len(docs) == 0 {
 		return nil
 	}
+	sortableID := d.sortableIDField()
 	payload := make([]any, len(docs))
 	for i, doc := range docs {
-		payload[i] = DocForWrite(doc)
+		payload[i] = DocForWrite(doc, sortableID)
 	}
 	_, err := d.db.Collection(name).InsertMany(ctx, payload)
 	if err != nil {
@@ -164,19 +184,21 @@ func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[st
 }
 
 // DocForWrite copies doc, maps Portico "id" onto MongoDB "_id" (string),
-// and sets id_int from a numeric document id when possible.
-func DocForWrite(doc map[string]any) map[string]any {
+// and sets the numeric companion from a numeric document id when possible.
+func DocForWrite(doc map[string]any, sortableID string) map[string]any {
 	out := make(map[string]any, len(doc)+2)
 	for k, v := range doc {
-		if k == "id" || k == SortableIDField {
+		if k == "id" || (sortableID != "" && k == sortableID) {
 			continue
 		}
 		out[k] = v
 	}
 	if id, ok := doc["id"]; ok && id != nil && fmt.Sprint(id) != "" {
 		out["_id"] = fmt.Sprint(id)
-		if n, ok := docutil.ParseInt64(id); ok {
-			out[SortableIDField] = n
+		if sortableID != "" {
+			if n, ok := docutil.ParseInt64(id); ok {
+				out[sortableID] = n
+			}
 		}
 	}
 	return out
@@ -184,11 +206,11 @@ func DocForWrite(doc map[string]any) map[string]any {
 
 // DocFromRead copies a stored document and maps "_id" back to "id" for explore/UI.
 // Nested BSON maps/arrays are normalized to map[string]any / []any.
-// id_int is an internal sortable copy of id — hidden from explore/UI.
-func DocFromRead(doc map[string]any) map[string]any {
+// The numeric companion of id is an internal field — hidden from explore/UI.
+func DocFromRead(doc map[string]any, sortableID string) map[string]any {
 	out := make(map[string]any, len(doc))
 	for k, v := range doc {
-		if k == SortableIDField {
+		if sortableID != "" && k == sortableID {
 			continue
 		}
 		if k == "_id" {
@@ -250,7 +272,7 @@ func (d *Destination) Query(ctx context.Context, name string, filters []connecto
 		offset = 0
 	}
 
-	filter, err := BuildFilter(filters)
+	filter, err := BuildFilter(filters, d.sortableIDField())
 	if err != nil {
 		return nil, 0, err
 	}
@@ -263,7 +285,7 @@ func (d *Destination) Query(ctx context.Context, name string, filters []connecto
 
 	findOpts := options.Find().SetSkip(int64(offset)).SetLimit(int64(limit))
 	if order != nil && strings.TrimSpace(order.Column) != "" {
-		col := docutil.SortColumn(order.Column, SortableIDField)
+		col := docutil.SortColumn(order.Column, d.sortableIDField())
 		dir := 1
 		if order.Desc {
 			dir = -1
@@ -277,7 +299,7 @@ func (d *Destination) Query(ctx context.Context, name string, filters []connecto
 	}
 	defer cur.Close(ctx)
 
-	rows, err := decodeDocs(cur, ctx)
+	rows, err := decodeDocs(cur, ctx, d.sortableIDField())
 	if err != nil {
 		return nil, 0, err
 	}
@@ -292,14 +314,14 @@ func bsonMToMap(m bson.M) map[string]any {
 	return out
 }
 
-func decodeDocs(cur *mongo.Cursor, ctx context.Context) ([]map[string]any, error) {
+func decodeDocs(cur *mongo.Cursor, ctx context.Context, sortableID string) ([]map[string]any, error) {
 	rows := []map[string]any{}
 	for cur.Next(ctx) {
 		var raw bson.M
 		if err := cur.Decode(&raw); err != nil {
 			return nil, fmt.Errorf("mongodb decode: %w", err)
 		}
-		rows = append(rows, DocFromRead(bsonMToMap(raw)))
+		rows = append(rows, DocFromRead(bsonMToMap(raw), sortableID))
 	}
 	if err := cur.Err(); err != nil {
 		return nil, fmt.Errorf("mongodb cursor: %w", err)

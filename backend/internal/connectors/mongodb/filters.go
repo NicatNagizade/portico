@@ -13,13 +13,17 @@ import (
 )
 
 // BuildFilter maps Portico filters to a MongoDB filter document (AND'd).
-func BuildFilter(filters []connectors.Filter) (bson.D, error) {
+// sortableID is the numeric companion of "id" (default id_int).
+func BuildFilter(filters []connectors.Filter, sortableID string) (bson.D, error) {
+	if sortableID == "" {
+		sortableID = SortableIDField
+	}
 	if len(filters) == 0 {
 		return bson.D{}, nil
 	}
 	clauses := make(bson.A, 0, len(filters))
 	for _, f := range filters {
-		clause, err := filterClause(f)
+		clause, err := filterClause(f, sortableID)
 		if err != nil {
 			return nil, err
 		}
@@ -31,8 +35,8 @@ func BuildFilter(filters []connectors.Filter) (bson.D, error) {
 	return bson.D{{Key: "$and", Value: clauses}}, nil
 }
 
-func filterClause(f connectors.Filter) (bson.D, error) {
-	col := docutil.IDFilterColumn(f.Column, f.Operator, "_id", SortableIDField)
+func filterClause(f connectors.Filter, sortableID string) (bson.D, error) {
+	col := docutil.IDFilterColumn(f.Column, f.Operator, "_id", sortableID)
 	if col == "" {
 		return nil, fmt.Errorf("filter field is required")
 	}

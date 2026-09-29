@@ -105,9 +105,63 @@ func TestBuildCollectionSchemaMapsIDSortToIDInt(t *testing.T) {
 	}
 }
 
+func TestBuildCollectionSchemaCustomPrimaryKeyInt(t *testing.T) {
+	schema := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+			{Name: "name", Type: connectors.FieldTypeString},
+		},
+	}
+	cfg, err := typesense.ParseCollectionConfig([]byte(`{"primary_key":{"source":"id","int":"pk_int"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coll, err := typesense.BuildCollectionSchema("applicants", schema, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hasPKInt bool
+	for _, f := range coll.Fields {
+		if f.Name == "pk_int" {
+			hasPKInt = true
+			if f.Type != "int64" {
+				t.Fatalf("pk_int type=%q", f.Type)
+			}
+		}
+		if f.Name == typesense.SortableIDField {
+			t.Fatal("default id_int should not be present when primary_key.int is set")
+		}
+	}
+	if !hasPKInt {
+		t.Fatalf("expected pk_int field, got %+v", coll.Fields)
+	}
+}
+
+func TestBuildCollectionSchemaNoIntCompanion(t *testing.T) {
+	schema := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+			{Name: "name", Type: connectors.FieldTypeString},
+		},
+	}
+	cfg, err := typesense.ParseCollectionConfig([]byte(`{"primary_key":{"source":["user_id","post_id"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coll, err := typesense.BuildCollectionSchema("posts", schema, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range coll.Fields {
+		if f.Name == typesense.SortableIDField || f.Name == "id_int" {
+			t.Fatalf("expected no int companion, got %+v", coll.Fields)
+		}
+	}
+}
+
 func TestParseCollectionConfig(t *testing.T) {
 	cfg, err := typesense.ParseCollectionConfig(nil)
-	if err != nil || cfg != nil {
+	if err != nil || cfg == nil || cfg.SortableID() != typesense.SortableIDField {
 		t.Fatalf("nil config: cfg=%v err=%v", cfg, err)
 	}
 	cfg, err = typesense.ParseCollectionConfig([]byte(`{"default_sorting_field":"id","enable_nested_fields":false}`))

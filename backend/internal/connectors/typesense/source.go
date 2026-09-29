@@ -129,7 +129,7 @@ func mapTypesenseType(t string) connectors.FieldType {
 }
 
 func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
-	filterBy, ok := BuildFilterBy(filters)
+	filterBy, ok := BuildFilterBy(filters, SortableIDField)
 	if len(filters) > 0 && !ok {
 		docs, err := loadAll(ctx, s.client, table)
 		if err != nil {
@@ -150,7 +150,7 @@ func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, fi
 }
 
 func (s *Source) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
-	filterBy, ok := BuildFilterBy(filters)
+	filterBy, ok := BuildFilterBy(filters, SortableIDField)
 	// Full scan when filters can't be pushed, or when sorting (needs global order before page).
 	if order != nil || (len(filters) > 0 && !ok) {
 		docs, err := loadAll(ctx, s.client, table)
@@ -202,7 +202,7 @@ func searchPage(ctx context.Context, client *typesense.Client, table, filterBy s
 	if err != nil {
 		return nil, 0, fmt.Errorf("typesense retrieve collection %q: %w", table, err)
 	}
-	queryBy := searchableQueryBy(coll.Fields)
+	queryBy := searchableQueryBy(coll.Fields, SortableIDField)
 	if queryBy == "" {
 		return []map[string]any{}, 0, nil
 	}
@@ -248,7 +248,7 @@ func loadAll(ctx context.Context, client *typesense.Client, table string) ([]map
 	if err != nil {
 		return nil, fmt.Errorf("typesense retrieve collection %q: %w", table, err)
 	}
-	queryBy := searchableQueryBy(coll.Fields)
+	queryBy := searchableQueryBy(coll.Fields, SortableIDField)
 	if queryBy == "" {
 		// No searchable string fields — try exporting via document retrieve is not available;
 		// return empty rather than fail hard when collection has only non-string fields.

@@ -27,7 +27,12 @@ function fromCsv(value) {
 
 function buildInitialConfig(config) {
   const parsed = parseConfig(config)
+  const pk = normalizePrimaryKey(parsed.primary_key, parsed.primary_key_int)
   return {
+    primary_key_source: pk.source,
+    primary_key_destination: pk.destination,
+    primary_key_int_enabled: pk.intEnabled,
+    primary_key_int: pk.intField,
     default_sorting_field: parsed.default_sorting_field || '',
     enable_nested_fields:
       parsed.enable_nested_fields === undefined ? true : Boolean(parsed.enable_nested_fields),
@@ -35,6 +40,79 @@ function buildInitialConfig(config) {
     token_separators: toArrayCsv(parsed.token_separators),
     apply_schema: Boolean(parsed.apply_schema),
   }
+}
+
+/** Normalize stored primary_key (string | array | object) + legacy primary_key_int into form state. */
+function normalizePrimaryKey(primaryKey, legacyInt) {
+  const legacy = typeof legacyInt === 'string' ? legacyInt.trim() : ''
+  if (primaryKey == null || primaryKey === '') {
+    return {
+      source: '',
+      destination: '',
+      intEnabled: true,
+      intField: legacy || 'id_int',
+    }
+  }
+  if (typeof primaryKey === 'string') {
+    return {
+      source: primaryKey,
+      destination: '',
+      intEnabled: legacy ? true : false,
+      intField: legacy || 'id_int',
+    }
+  }
+  if (Array.isArray(primaryKey)) {
+    return {
+      source: primaryKey.filter(Boolean).join(', '),
+      destination: '',
+      intEnabled: legacy ? true : false,
+      intField: legacy || 'id_int',
+    }
+  }
+  if (typeof primaryKey === 'object') {
+    const source = Array.isArray(primaryKey.source)
+      ? primaryKey.source.filter(Boolean).join(', ')
+      : primaryKey.source || ''
+    const hasIntKey = primaryKey.int !== undefined && primaryKey.int !== null
+    const intVal = hasIntKey ? String(primaryKey.int).trim() : legacy
+    return {
+      source,
+      destination: primaryKey.destination || '',
+      intEnabled: hasIntKey ? Boolean(intVal) : Boolean(legacy),
+      intField: intVal || 'id_int',
+    }
+  }
+  return { source: '', destination: '', intEnabled: true, intField: 'id_int' }
+}
+
+function buildPrimaryKeyPayload(config, destinationType) {
+  const source = fromCsv(config.primary_key_source)
+  const destination = config.primary_key_destination.trim()
+  const supportsInt = destinationType === 'typesense' || destinationType === 'mongodb'
+  const intEnabled = supportsInt && config.primary_key_int_enabled
+  const intField = config.primary_key_int.trim() || 'id_int'
+
+  const hasSource = source.length > 0
+  const hasDest = Boolean(destination && destination !== 'id')
+  const intDefaultOn = intEnabled && intField === 'id_int'
+  const intOff = supportsInt && !config.primary_key_int_enabled
+  const intCustom = intEnabled && intField !== 'id_int'
+
+  // Defaults match backend (id + id_int) — omit config entirely.
+  if (!hasSource && !hasDest && (!supportsInt || intDefaultOn)) {
+    return null
+  }
+
+  const payload = {}
+  if (source.length === 1) payload.source = source[0]
+  else if (source.length > 1) payload.source = source
+  if (hasDest) payload.destination = destination
+  if (intEnabled) payload.int = intField
+  // intOff with empty payload {} still marks primary_key configured (no companion).
+  if (!hasSource && !hasDest && !intOff && !intCustom) {
+    return null
+  }
+  return payload
 }
 
 function mapFieldValue(v) {
@@ -250,6 +328,11 @@ export default function SyncJobForm({
       (initial?.rules || []).length > 0 ||
       (initial?.fields || []).length > 0 ||
       (initial?.relations || []).length > 0 ||
+      Boolean(initialConfig.primary_key_source) ||
+      Boolean(initialConfig.primary_key_destination) ||
+      (initialConfig.primary_key_int_enabled &&
+        initialConfig.primary_key_int &&
+        initialConfig.primary_key_int !== 'id_int') ||
       Boolean(initialConfig.default_sorting_field) ||
       Boolean(initialConfig.apply_schema) ||
       (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length > 0) ||
@@ -257,6 +340,11 @@ export default function SyncJobForm({
   )
   const [showDestConfig, setShowDestConfig] = useState(
     () =>
+      Boolean(initialConfig.primary_key_source) ||
+      Boolean(initialConfig.primary_key_destination) ||
+      (initialConfig.primary_key_int_enabled &&
+        initialConfig.primary_key_int &&
+        initialConfig.primary_key_int !== 'id_int') ||
       Boolean(initialConfig.default_sorting_field) ||
       Boolean(initialConfig.apply_schema) ||
       (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length > 0) ||
@@ -297,7 +385,7 @@ export default function SyncJobForm({
     const ruleCount = rules.filter((r) => r.field.trim()).length
     const fieldCount = fields.filter((f) => f.source_name.trim()).length
     const relationCount = relations.filter((r) => r.name.trim() && r.table.trim()).length
-    if (destinationType === 'typesense' || destinationType === 'mongodb') {
+    if (destinationType) {
       parts.push('destination config')
     }
     if (ruleCount) parts.push(`${ruleCount} rule${ruleCount === 1 ? '' : 's'}`)
@@ -316,6 +404,10 @@ export default function SyncJobForm({
     event.preventDefault()
 
     const payloadConfig = {}
+    const primaryKey = buildPrimaryKeyPayload(config, destinationType)
+    if (primaryKey) {
+      payloadConfig.primary_key = primaryKey
+    }
     if (destinationType === 'typesense') {
       if (config.default_sorting_field.trim()) {
         payloadConfig.default_sorting_field = config.default_sorting_field.trim()
@@ -462,87 +554,146 @@ export default function SyncJobForm({
         onToggle={setShowAdvanced}
         summary={mappingSummary}
       >
-        {destinationType === 'typesense' ? (
+        {destinationType ? (
           <ButtonPanel
             title="Destination config"
-            description="Optional Typesense options."
+            description="Optional options for the destination write."
             open={showDestConfig}
             onToggle={setShowDestConfig}
           >
             <div className="space-y-4">
-              <Field
-                label="Default sorting field"
-                hint="int32/float/int64 — id uses id_int"
+              <div
+                className={`grid gap-4 ${
+                  destinationType === 'typesense' || destinationType === 'mongodb'
+                    ? 'sm:grid-cols-3'
+                    : 'sm:grid-cols-2'
+                }`}
               >
-                <AutocompleteInput
-                  options={sourceColumnNames}
-                  value={config.default_sorting_field}
-                  onFocus={() => ensureColumns(sourceTable)}
-                  onChange={(e) =>
-                    setConfig((prev) => ({ ...prev, default_sorting_field: e.target.value }))
-                  }
+                <Field
+                  label="Primary key (source)"
+                  hint="Comma-separated → joined with _ (default: id)"
+                >
+                  <AutocompleteInput
+                    options={sourceColumnNames}
+                    value={config.primary_key_source}
+                    placeholder="id"
+                    onFocus={() => ensureColumns(sourceTable)}
+                    onChange={(e) =>
+                      setConfig((prev) => ({ ...prev, primary_key_source: e.target.value }))
+                    }
+                  />
+                </Field>
+                <Field
+                  label="Primary key (destination)"
+                  hint="Joined key field (default: id)"
+                >
+                  <input
+                    className={inputClassName}
+                    value={config.primary_key_destination}
+                    placeholder="id"
+                    onChange={(e) =>
+                      setConfig((prev) => ({ ...prev, primary_key_destination: e.target.value }))
+                    }
+                  />
+                </Field>
+                {destinationType === 'typesense' || destinationType === 'mongodb' ? (
+                  <Field
+                    label="Integer companion"
+                    hint="Numeric copy for sorting (optional)"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Toggle
+                        checked={config.primary_key_int_enabled}
+                        onChange={(on) =>
+                          setConfig((prev) => ({ ...prev, primary_key_int_enabled: on }))
+                        }
+                        aria-label="Enable integer companion field"
+                        className="shrink-0"
+                      />
+                      <input
+                        className={inputClassName}
+                        value={config.primary_key_int}
+                        placeholder="id_int"
+                        disabled={!config.primary_key_int_enabled}
+                        onChange={(e) =>
+                          setConfig((prev) => ({ ...prev, primary_key_int: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </Field>
+                ) : null}
+              </div>
+
+              {destinationType === 'typesense' ? (
+                <>
+                  <Field
+                    label="Default sorting field"
+                    hint="int32/float/int64 — id uses integer companion when enabled"
+                  >
+                    <AutocompleteInput
+                      options={sourceColumnNames}
+                      value={config.default_sorting_field}
+                      onFocus={() => ensureColumns(sourceTable)}
+                      onChange={(e) =>
+                        setConfig((prev) => ({ ...prev, default_sorting_field: e.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Toggle
+                    checked={config.enable_nested_fields}
+                    onChange={(on) => setConfig((prev) => ({ ...prev, enable_nested_fields: on }))}
+                    label="Enable nested fields"
+                    description="Keep nested objects and arrays in the Typesense schema."
+                  />
+                  <Toggle
+                    checked={showTypesenseAdvanced}
+                    onChange={(on) => {
+                      setShowTypesenseAdvanced(on)
+                      if (!on) {
+                        setConfig((prev) => ({
+                          ...prev,
+                          symbols_to_index: '',
+                          token_separators: '',
+                        }))
+                      }
+                    }}
+                    label="Custom indexing symbols"
+                    description="Override symbols to index and token separators."
+                  />
+                  {showTypesenseAdvanced ? (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Symbols to index" hint="Comma-separated">
+                        <input
+                          className={inputClassName}
+                          value={config.symbols_to_index}
+                          onChange={(e) =>
+                            setConfig((prev) => ({ ...prev, symbols_to_index: e.target.value }))
+                          }
+                        />
+                      </Field>
+                      <Field label="Token separators" hint="Comma-separated">
+                        <input
+                          className={inputClassName}
+                          value={config.token_separators}
+                          onChange={(e) =>
+                            setConfig((prev) => ({ ...prev, token_separators: e.target.value }))
+                          }
+                        />
+                      </Field>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              {destinationType === 'mongodb' ? (
+                <Toggle
+                  checked={config.apply_schema}
+                  onChange={(on) => setConfig((prev) => ({ ...prev, apply_schema: on }))}
+                  label="Apply schema"
+                  description="Create a JSON Schema validator on the destination collection from the mapped fields."
                 />
-              </Field>
-              <Toggle
-                checked={config.enable_nested_fields}
-                onChange={(on) => setConfig((prev) => ({ ...prev, enable_nested_fields: on }))}
-                label="Enable nested fields"
-                description="Keep nested objects and arrays in the Typesense schema."
-              />
-              <Toggle
-                checked={showTypesenseAdvanced}
-                onChange={(on) => {
-                  setShowTypesenseAdvanced(on)
-                  if (!on) {
-                    setConfig((prev) => ({
-                      ...prev,
-                      symbols_to_index: '',
-                      token_separators: '',
-                    }))
-                  }
-                }}
-                label="Custom indexing symbols"
-                description="Override symbols to index and token separators."
-              />
-              {showTypesenseAdvanced ? (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Symbols to index" hint="Comma-separated">
-                    <input
-                      className={inputClassName}
-                      value={config.symbols_to_index}
-                      onChange={(e) =>
-                        setConfig((prev) => ({ ...prev, symbols_to_index: e.target.value }))
-                      }
-                    />
-                  </Field>
-                  <Field label="Token separators" hint="Comma-separated">
-                    <input
-                      className={inputClassName}
-                      value={config.token_separators}
-                      onChange={(e) =>
-                        setConfig((prev) => ({ ...prev, token_separators: e.target.value }))
-                      }
-                    />
-                  </Field>
-                </div>
               ) : null}
             </div>
-          </ButtonPanel>
-        ) : null}
-
-        {destinationType === 'mongodb' ? (
-          <ButtonPanel
-            title="Destination config"
-            description="Optional MongoDB options."
-            open={showDestConfig}
-            onToggle={setShowDestConfig}
-          >
-            <Toggle
-              checked={config.apply_schema}
-              onChange={(on) => setConfig((prev) => ({ ...prev, apply_schema: on }))}
-              label="Apply schema"
-              description="Create a JSON Schema validator on the destination collection from the mapped fields."
-            />
           </ButtonPanel>
         ) : null}
 
