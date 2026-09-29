@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -788,6 +789,61 @@ func (m *failingSource) QueryRows(ctx context.Context, table string, columns []s
 	return nil, m.err
 }
 
+func (m *mockSource) rowsFor(table string) []map[string]any {
+	if m.tableRows != nil {
+		if rows, ok := m.tableRows[table]; ok {
+			return rows
+		}
+	}
+	return m.rows
+}
+
+func (m *mockSource) SupportsRelationFilters() bool { return true }
+
+func (m *mockSource) matchRow(table string, row map[string]any, filters []connectors.Filter) bool {
+	for _, f := range filters {
+		if f.Rel != nil {
+			want := fmt.Sprint(row[f.Column])
+			found := false
+			for _, v := range m.subqueryValues(f.Rel) {
+				if fmt.Sprint(v) == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+			continue
+		}
+		if !matchFilters(row, []connectors.Filter{f}) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *mockSource) subqueryValues(rel *connectors.RelationSubquery) []any {
+	var out []any
+	seen := map[string]struct{}{}
+	for _, row := range m.rowsFor(rel.Table) {
+		if !m.matchRow(rel.Table, row, rel.Where) {
+			continue
+		}
+		v, ok := row[rel.Select]
+		if !ok || v == nil {
+			continue
+		}
+		key := fmt.Sprint(v)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
 func (m *mockSource) Open(ctx context.Context) error { return nil }
 func (m *mockSource) Close() error                   { return nil }
 func (m *mockSource) ListTables(ctx context.Context) ([]string, error) {
@@ -814,8 +870,8 @@ func (m *mockSource) Schema(ctx context.Context, table string) (*connectors.Tabl
 }
 func (m *mockSource) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
 	n := int64(0)
-	for _, row := range m.rows {
-		if matchFilters(row, filters) {
+	for _, row := range m.rowsFor(table) {
+		if m.matchRow(table, row, filters) {
 			n++
 		}
 	}
@@ -831,8 +887,8 @@ func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int
 		}
 	}
 	var filtered []map[string]any
-	for _, row := range m.rows {
-		if matchFilters(row, filters) {
+	for _, row := range m.rowsFor(table) {
+		if m.matchRow(table, row, filters) {
 			filtered = append(filtered, row)
 		}
 	}
@@ -849,8 +905,8 @@ func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int
 }
 func (m *mockSource) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
 	var filtered []map[string]any
-	for _, row := range m.rows {
-		if matchFilters(row, filters) {
+	for _, row := range m.rowsFor(table) {
+		if m.matchRow(table, row, filters) {
 			copied := make(map[string]any, len(row))
 			if len(columns) == 0 {
 				for k, val := range row {
@@ -1862,6 +1918,12 @@ func TestSyncRunWithNestedHasMany(t *testing.T) {
 	if hello == nil {
 		t.Fatal("expected Ada post titled hello")
 	}
+	if fmt.Sprint(hello["id"]) != "10" {
+		t.Fatalf("expected post id 10, got %#v", hello["id"])
+	}
+	if fmt.Sprint(hello["user_id"]) != "1" {
+		t.Fatalf("expected post user_id 1 preserved, got %#v", hello["user_id"])
+	}
 	comments, ok := hello["comments"].([]map[string]any)
 	if !ok || len(comments) != 2 {
 		t.Fatalf("expected 2 comments on hello, got %#v", hello["comments"])
@@ -2012,6 +2074,114 @@ func TestSyncRunWithBelongsToAndRelationFields(t *testing.T) {
 	if _, exists := author["email"]; exists {
 		t.Fatalf("expected source email removed after rename, got %#v", author)
 	}
+	if fmt.Sprint(dst.batches[0][0]["user_id"]) != "10" {
+		t.Fatalf("expected foreign key user_id kept alongside author embed, got %#v", dst.batches[0][0])
+	}
+}
+
+func TestSyncRunBelongsToReplacesIdWhenNameMatchesFK(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name: "src", Type: "mock_src", Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name: "dst", Type: "mock_dst", Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "posts-user-id-embed",
+		SourceConnectionID:      srcConn.ID,
+		SourceTable:             "posts",
+		DestinationConnectionID: dstConn.ID,
+		DestinationTable:        "posts",
+		ChunkSize:               10,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Relation name == foreign_key: the bare id must be replaced with the full object.
+	if err := gdb.Create(&models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		Name:       "user_id",
+		Type:       models.RelationTypeBelongsTo,
+		Table:      "users",
+		ForeignKey: "user_id",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "title", Type: connectors.FieldTypeString},
+				{Name: "user_id", Type: connectors.FieldTypeInt64},
+			},
+		},
+		schemas: map[string]*connectors.TableSchema{
+			"posts": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "title", Type: connectors.FieldTypeString},
+					{Name: "user_id", Type: connectors.FieldTypeInt64},
+				},
+			},
+			"users": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "name", Type: connectors.FieldTypeString},
+				},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "title": "hello", "user_id": 10},
+		},
+		tableRows: map[string][]map[string]any{
+			"users": {
+				{"id": 10, "name": "Ada"},
+			},
+		},
+	}
+	dst := &mockDest{}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/run", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var logEntry models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
+		t.Fatal(err)
+	}
+	if logEntry.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", logEntry.Status, logEntry.Message)
+	}
+	if len(dst.batches) == 0 || len(dst.batches[0]) == 0 {
+		t.Fatal("expected written docs")
+	}
+	user, ok := dst.batches[0][0]["user_id"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected user_id to be full object, got %#v", dst.batches[0][0]["user_id"])
+	}
+	if fmt.Sprint(user["name"]) != "Ada" {
+		t.Fatalf("expected Ada, got %#v", user)
+	}
 }
 
 func TestEnsureID(t *testing.T) {
@@ -2123,6 +2293,9 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 	if fmt.Sprint(preview.Rows[0]["full_name"]) != "a" {
 		t.Fatalf("expected renamed field full_name=a, got %#v", preview.Rows[0])
 	}
+	if preview.SortBy != "id" || preview.SortDir != "asc" {
+		t.Fatalf("expected default sort id asc, got %q %q", preview.SortBy, preview.SortDir)
+	}
 	wantCols := []string{"id", "full_name", "status"}
 	if len(preview.Columns) != len(wantCols) {
 		t.Fatalf("expected columns %v, got %v", wantCols, preview.Columns)
@@ -2218,6 +2391,26 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 		t.Fatalf("expected full_name header in csv, got %q", csvText)
 	}
 
+	fieldsExportBody, _ := json.Marshal(map[string]any{
+		"side":   "source",
+		"fields": []string{"full_name"},
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore/export", job.ID), bytes.NewReader(fieldsExportBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("export fields status=%d body=%s", w.Code, w.Body.String())
+	}
+	fieldsCSV := w.Body.String()
+	headerLine := strings.SplitN(fieldsCSV, "\n", 2)[0]
+	if headerLine != "full_name" {
+		t.Fatalf("expected fields export header full_name only, got %q", headerLine)
+	}
+	if strings.Contains(headerLine, "status") || strings.Contains(headerLine, "id") {
+		t.Fatalf("fields export should omit other columns, got %q", headerLine)
+	}
+
 	destBody, _ := json.Marshal(map[string]any{"side": "destination", "page": 1, "page_size": 10})
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(destBody))
@@ -2271,5 +2464,125 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing job, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestExploreSourceBelongsToNestedFilter(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{Name: "src", Type: "mock_src", Config: datatypes.JSON([]byte(`{}`))}
+	dstConn := models.Connection{Name: "dst", Type: "mock_dst", Config: datatypes.JSON([]byte(`{}`))}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "posts-explore",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "posts",
+		DestinationTable:        "posts",
+		ChunkSize:               50,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		Name:       "user",
+		Type:       models.RelationTypeBelongsTo,
+		Table:      "users",
+		ForeignKey: "user_id",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	posts := make([]map[string]any, 0, 200)
+	for i := 1; i <= 200; i++ {
+		uid := 1
+		if i%10 == 0 {
+			uid = 25
+		}
+		posts = append(posts, map[string]any{"id": i, "title": fmt.Sprintf("p%d", i), "user_id": uid})
+	}
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "title", Type: connectors.FieldTypeString},
+				{Name: "user_id", Type: connectors.FieldTypeInt64},
+			},
+		},
+		schemas: map[string]*connectors.TableSchema{
+			"posts": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "title", Type: connectors.FieldTypeString},
+					{Name: "user_id", Type: connectors.FieldTypeInt64},
+				},
+			},
+			"users": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "bio", Type: connectors.FieldTypeString},
+				},
+			},
+		},
+		rows: posts,
+		tableRows: map[string][]map[string]any{
+			"users": {
+				{"id": 1, "bio": "other"},
+				{"id": 25, "bio": "Bio for Riley Lee (#25)"},
+			},
+		},
+	}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return &mockDest{}, nil
+	})
+	r := setupRouter(t, gdb, registry)
+
+	body, _ := json.Marshal(map[string]any{
+		"side":      "source",
+		"page":      1,
+		"page_size": 10,
+		"filters": []map[string]any{
+			{"field": "user.bio", "operator": "eq", "value": "Bio for Riley Lee (#25)"},
+		},
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore nested filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	var preview syncsvc.PreviewResult
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 20 {
+		t.Fatalf("expected 20 posts for user 25, got total=%d", preview.Total)
+	}
+	if len(preview.Rows) != 10 {
+		t.Fatalf("expected page of 10, got %d", len(preview.Rows))
+	}
+	for _, row := range preview.Rows {
+		if fmt.Sprint(row["user_id"]) != "25" {
+			t.Fatalf("expected user_id 25, got %#v", row)
+		}
+		user, ok := row["user"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected nested user object, got %#v", row["user"])
+		}
+		if fmt.Sprint(user["bio"]) != "Bio for Riley Lee (#25)" {
+			t.Fatalf("expected matching bio, got %#v", user)
+		}
 	}
 }

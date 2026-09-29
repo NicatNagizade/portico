@@ -63,6 +63,9 @@ func TestMongoDocForWriteAndFromRead(t *testing.T) {
 	if got["_id"] != "42" {
 		t.Fatalf("_id=%v, want string 42", got["_id"])
 	}
+	if got[mongodb.SortableIDField] != int64(42) {
+		t.Fatalf("id_int=%v, want 42", got[mongodb.SortableIDField])
+	}
 	if _, ok := got["id"]; ok {
 		t.Fatal("id should be removed when mapped to _id")
 	}
@@ -70,13 +73,26 @@ func TestMongoDocForWriteAndFromRead(t *testing.T) {
 		t.Fatalf("name=%v", got["name"])
 	}
 
+	nonNumeric := mongodb.DocForWrite(map[string]any{"id": "abc", "name": "Bob"})
+	if nonNumeric["_id"] != "abc" {
+		t.Fatalf("_id=%v, want abc", nonNumeric["_id"])
+	}
+	if _, ok := nonNumeric[mongodb.SortableIDField]; ok {
+		t.Fatal("id_int should be omitted for non-numeric id")
+	}
+
 	oid := bson.NewObjectID()
-	round := mongodb.DocFromRead(map[string]any{"_id": oid, "name": "Ada"})
+	round := mongodb.DocFromRead(map[string]any{
+		"_id": oid, "name": "Ada", mongodb.SortableIDField: int64(1),
+	})
 	if round["id"] != oid.Hex() {
 		t.Fatalf("id=%v, want hex %s", round["id"], oid.Hex())
 	}
 	if _, ok := round["_id"]; ok {
 		t.Fatal("_id should not appear in explore docs")
+	}
+	if _, ok := round[mongodb.SortableIDField]; ok {
+		t.Fatal("id_int should not appear in explore docs")
 	}
 }
 
@@ -166,6 +182,13 @@ func TestMongoBuildValidator(t *testing.T) {
 	if got := fmt.Sprint(idProp["bsonType"]); got != "[string null]" {
 		t.Fatalf("_id bsonType=%v", idProp["bsonType"])
 	}
+	idIntProp, ok := props[mongodb.SortableIDField].(bson.M)
+	if !ok {
+		t.Fatalf("id_int=%#v", props[mongodb.SortableIDField])
+	}
+	if got := fmt.Sprint(idIntProp["bsonType"]); got != "[int long null]" {
+		t.Fatalf("id_int bsonType=%v", idIntProp["bsonType"])
+	}
 	nameProp := props["name"].(bson.M)
 	if got := fmt.Sprint(nameProp["bsonType"]); got != "[string date null]" {
 		t.Fatalf("name bsonType=%v", nameProp["bsonType"])
@@ -228,6 +251,9 @@ func TestMongoBuildValidator(t *testing.T) {
 	}
 	if rtByName["id"].Type != connectors.FieldTypeString || !rtByName["id"].PrimaryKey {
 		t.Fatalf("id=%+v", rtByName["id"])
+	}
+	if _, ok := rtByName[mongodb.SortableIDField]; ok {
+		t.Fatal("id_int should be hidden from Portico schema")
 	}
 	rtPosts := rtByName["posts"]
 	if rtPosts.Type != connectors.FieldTypeObjectArray {

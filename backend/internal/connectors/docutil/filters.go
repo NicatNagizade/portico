@@ -245,6 +245,19 @@ func FilterRows(rows []map[string]any, filters []connectors.Filter) []map[string
 	return out
 }
 
+// CloneRows shallow-copies each row map so callers can mutate without affecting the source.
+func CloneRows(rows []map[string]any) []map[string]any {
+	out := make([]map[string]any, len(rows))
+	for i, row := range rows {
+		doc := make(map[string]any, len(row))
+		for k, v := range row {
+			doc[k] = v
+		}
+		out[i] = doc
+	}
+	return out
+}
+
 // SortRows sorts rows by order in place. Nil or empty column is a no-op.
 func SortRows(rows []map[string]any, order *connectors.Order) {
 	if order == nil || strings.TrimSpace(order.Column) == "" {

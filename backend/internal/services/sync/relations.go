@@ -314,12 +314,13 @@ func enrichBelongsTo(
 ) error {
 	rel = ResolveRelationKeys("", rel)
 
-	for _, doc := range docs {
-		doc[rel.Name] = nil
-	}
-
 	fkIDs := parentIDs(docs, rel.ForeignKey)
 	if len(fkIDs) == 0 {
+		for _, doc := range docs {
+			if rel.Name != rel.ForeignKey {
+				doc[rel.Name] = nil
+			}
+		}
 		return nil
 	}
 
@@ -352,11 +353,19 @@ func enrichBelongsTo(
 	for _, doc := range docs {
 		fk, ok := doc[rel.ForeignKey]
 		if !ok || fk == nil {
+			if rel.Name != rel.ForeignKey {
+				doc[rel.Name] = nil
+			}
 			continue
 		}
-		if related, ok := byID[fmt.Sprint(fk)]; ok {
-			doc[rel.Name] = related
+		related, ok := byID[fmt.Sprint(fk)]
+		if !ok {
+			if rel.Name != rel.ForeignKey {
+				doc[rel.Name] = nil
+			}
+			continue
 		}
+		doc[rel.Name] = related
 	}
 	return nil
 }

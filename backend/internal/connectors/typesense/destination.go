@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -152,10 +151,7 @@ func boolPtr(v bool) *bool {
 
 // resolveSortField maps explore/config "id" to the sortable int companion.
 func resolveSortField(col string) string {
-	if col == "id" {
-		return SortableIDField
-	}
-	return col
+	return docutil.SortColumn(col, SortableIDField)
 }
 
 func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[string]any) error {
@@ -187,7 +183,7 @@ func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[st
 
 // docWithSortableID copies doc and sets id_int from a numeric document id when possible.
 func docWithSortableID(doc map[string]any) map[string]any {
-	n, ok := toInt64(doc["id"])
+	n, ok := docutil.ParseInt64(doc["id"])
 	if !ok {
 		return doc
 	}
@@ -197,50 +193,6 @@ func docWithSortableID(doc map[string]any) map[string]any {
 	}
 	out[SortableIDField] = n
 	return out
-}
-
-func toInt64(v any) (int64, bool) {
-	if v == nil {
-		return 0, false
-	}
-	switch x := v.(type) {
-	case int:
-		return int64(x), true
-	case int8:
-		return int64(x), true
-	case int16:
-		return int64(x), true
-	case int32:
-		return int64(x), true
-	case int64:
-		return x, true
-	case uint:
-		return int64(x), true
-	case uint8:
-		return int64(x), true
-	case uint16:
-		return int64(x), true
-	case uint32:
-		return int64(x), true
-	case uint64:
-		if x > uint64(^uint64(0)>>1) {
-			return 0, false
-		}
-		return int64(x), true
-	case float32:
-		return int64(x), true
-	case float64:
-		return int64(x), true
-	case json.Number:
-		n, err := x.Int64()
-		return n, err == nil
-	case string:
-		n, err := strconv.ParseInt(strings.TrimSpace(x), 10, 64)
-		return n, err == nil
-	default:
-		n, err := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(x)), 10, 64)
-		return n, err == nil
-	}
 }
 
 // Query reads documents from a Typesense collection (paginated). Used by explore.

@@ -1,9 +1,6 @@
 import { RULE_OPERATORS, ruleNeedsValue } from '../../lib/ruleOperators'
 import AutocompleteInput from '../AutocompleteInput'
-import { IconButton, SecondaryButton, Toggle } from '../ui'
-
-const compactInput =
-  'w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-soft)]'
+import { Checkbox, IconButton, SecondaryButton, compactInputClassName } from '../ui'
 
 function emptyRule() {
   return {
@@ -102,7 +99,7 @@ export default function RuleEditor({
                     <td className="px-3 py-2">
                       <AutocompleteInput
                         required
-                        className={compactInput}
+                        className={compactInputClassName}
                         options={sourceColumns}
                         value={row.field}
                         onFocus={onNeedSourceColumns}
@@ -112,7 +109,7 @@ export default function RuleEditor({
                     </td>
                     <td className="px-3 py-2">
                       <select
-                        className={compactInput}
+                        className={compactInputClassName}
                         value={row.operator}
                         onChange={(e) => {
                           const operator = e.target.value
@@ -133,7 +130,7 @@ export default function RuleEditor({
                       {needsValue ? (
                         <input
                           required
-                          className={compactInput}
+                          className={compactInputClassName}
                           value={row.value}
                           onChange={(e) => updateRow(index, { value: e.target.value })}
                           placeholder={row.operator === 'in' || row.operator === 'not_in' ? 'a, b, c' : '123'}
@@ -144,7 +141,7 @@ export default function RuleEditor({
                     </td>
                     <td className="px-3 py-2 text-center align-middle">
                       <div className="flex justify-center">
-                        <Toggle
+                        <Checkbox
                           checked={row.active !== false}
                           onChange={(on) => updateRow(index, { active: on })}
                           aria-label="Active"

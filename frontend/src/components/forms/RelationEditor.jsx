@@ -2,11 +2,8 @@ import { useState } from 'react'
 import { RELATION_TYPES } from '../../lib/relationTypes'
 import { columnNames, fieldsFromSourceColumns } from '../../lib/sourceColumns'
 import AutocompleteInput from '../AutocompleteInput'
-import { GhostButton, IconButton, MetaChip, SecondaryButton, Toggle } from '../ui'
+import { Checkbox, GhostButton, IconButton, MetaChip, SecondaryButton, compactInputClassName } from '../ui'
 import FieldEditor from './FieldEditor'
-
-const compactInput =
-  'w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-soft)]'
 
 let nextTempId = -1
 
@@ -111,9 +108,6 @@ function RelationCard({
   const fieldCount = countOwnFields(row)
   const children = row.relations || []
   const label = row.name.trim() || 'Untitled relation'
-  const [customKeys, setCustomKeys] = useState(
-    () => Boolean(row.foreign_key?.trim() || row.related_key?.trim()),
-  )
 
   function toggleExpanded() {
     const key = String(row.id)
@@ -177,12 +171,12 @@ function RelationCard({
                 {fieldCount} field{fieldCount === 1 ? '' : 's'}
               </MetaChip>
             ) : null}
-            {row.active === false ? (
-              <span className="rounded-md bg-[var(--danger-soft)] px-2 py-0.5 font-mono text-[11px] text-[var(--danger)]">
-                off
-              </span>
-            ) : null}
           </button>
+          <Checkbox
+            checked={row.active !== false}
+            onChange={(on) => patch({ active: on })}
+            aria-label="Active"
+          />
           <IconButton label="Remove relation" tone="danger" onClick={onRemove}>
             <TrashIcon />
           </IconButton>
@@ -194,7 +188,7 @@ function RelationCard({
               <label className="block text-xs">
                 <span className="mb-1 block text-[var(--text-muted)]">Name</span>
                 <input
-                  className={compactInput}
+                  className={compactInputClassName}
                   value={row.name}
                   onChange={(e) => patch({ name: e.target.value })}
                   required
@@ -204,7 +198,7 @@ function RelationCard({
               <label className="block text-xs">
                 <span className="mb-1 block text-[var(--text-muted)]">Type</span>
                 <select
-                  className={compactInput}
+                  className={compactInputClassName}
                   value={row.type}
                   onChange={(e) => patch({ type: e.target.value })}
                 >
@@ -218,7 +212,7 @@ function RelationCard({
               <label className="block text-xs">
                 <span className="mb-1 block text-[var(--text-muted)]">Related table</span>
                 <AutocompleteInput
-                  className={compactInput}
+                  className={compactInputClassName}
                   options={tables}
                   value={row.table}
                   onFocus={onNeedTables}
@@ -230,7 +224,7 @@ function RelationCard({
                 <label className="block text-xs">
                   <span className="mb-1 block text-[var(--text-muted)]">Pivot table</span>
                   <AutocompleteInput
-                    className={compactInput}
+                    className={compactInputClassName}
                     options={tables}
                     value={row.pivot_table || ''}
                     onFocus={onNeedTables}
@@ -241,48 +235,29 @@ function RelationCard({
               )}
             </div>
 
-            <div className="space-y-3">
-              <Toggle
-                checked={row.active !== false}
-                onChange={(on) => patch({ active: on })}
-                label="Active"
-                description="Inactive relations are skipped during sync."
-              />
-              <Toggle
-                checked={customKeys}
-                onChange={(on) => {
-                  setCustomKeys(on)
-                  if (!on) patch({ foreign_key: '', related_key: '' })
-                }}
-                label="Custom foreign / related keys"
-                description="Leave off to infer keys from the relation name."
-              />
-              {customKeys ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="block text-xs">
-                    <span className="mb-1 block text-[var(--text-muted)]">Foreign key</span>
-                    <AutocompleteInput
-                      className={compactInput}
-                      options={columnNames(fkColumns)}
-                      value={row.foreign_key || ''}
-                      onFocus={() => fkTable && onNeedColumns?.(fkTable)}
-                      onChange={(e) => patch({ foreign_key: e.target.value })}
-                      placeholder="auto"
-                    />
-                  </label>
-                  <label className="block text-xs">
-                    <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
-                    <AutocompleteInput
-                      className={compactInput}
-                      options={columnNames(rkColumns)}
-                      value={row.related_key || ''}
-                      onFocus={() => rkTable && onNeedColumns?.(rkTable)}
-                      onChange={(e) => patch({ related_key: e.target.value })}
-                      placeholder="auto"
-                    />
-                  </label>
-                </div>
-              ) : null}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs">
+                <span className="mb-1 block text-[var(--text-muted)]">Foreign key</span>
+                <AutocompleteInput
+                  className={compactInputClassName}
+                  options={columnNames(fkColumns)}
+                  value={row.foreign_key || ''}
+                  onFocus={() => fkTable && onNeedColumns?.(fkTable)}
+                  onChange={(e) => patch({ foreign_key: e.target.value })}
+                  placeholder="auto"
+                />
+              </label>
+              <label className="block text-xs">
+                <span className="mb-1 block text-[var(--text-muted)]">Related key</span>
+                <AutocompleteInput
+                  className={compactInputClassName}
+                  options={columnNames(rkColumns)}
+                  value={row.related_key || ''}
+                  onFocus={() => rkTable && onNeedColumns?.(rkTable)}
+                  onChange={(e) => patch({ related_key: e.target.value })}
+                  placeholder="auto"
+                />
+              </label>
             </div>
 
             <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)]/70 p-3">

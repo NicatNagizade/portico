@@ -30,6 +30,7 @@ func ParseCollectionConfig(raw json.RawMessage) (*CollectionConfig, error) {
 
 // BuildValidator maps a Portico table schema to a MongoDB $jsonSchema validator.
 // Portico "id" becomes MongoDB "_id" (always string — EnsureID stringifies before write).
+// A numeric id_int companion is added for sorting (same pattern as Typesense).
 // Nested Columns (relations) become object properties or array items.
 // Null is allowed on every property. SQL timestamps arrive as time.Time → BSON date.
 func BuildValidator(schema *connectors.TableSchema) (bson.M, error) {
@@ -40,6 +41,7 @@ func BuildValidator(schema *connectors.TableSchema) (bson.M, error) {
 	if len(props) == 0 {
 		return nil, fmt.Errorf("mongodb apply_schema: table schema has no columns")
 	}
+	props[SortableIDField] = bson.M{"bsonType": []string{"int", "long", "null"}}
 	return bson.M{
 		"$jsonSchema": bson.M{
 			"bsonType":   "object",
@@ -67,6 +69,9 @@ func SchemaFromValidator(validator bson.M) *connectors.TableSchema {
 	}
 	names := make([]string, 0, len(props))
 	for name := range props {
+		if name == SortableIDField {
+			continue // internal sortable copy of id — hide from Portico schema
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -226,7 +231,7 @@ func bsonTypeList(v any) []string {
 func propertiesFromColumns(cols []connectors.ColumnSchema, root bool) bson.M {
 	props := bson.M{}
 	for _, col := range cols {
-		if col.Name == "" {
+		if col.Name == "" || col.Name == SortableIDField {
 			continue
 		}
 		if root && col.Name == "id" {

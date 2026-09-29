@@ -2,6 +2,7 @@ package docutil
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/portico/backend/internal/connectors"
 )
@@ -31,6 +32,8 @@ func SchemaFromDocs(docs []map[string]any) *connectors.TableSchema {
 	for _, k := range order {
 		schema.Columns = append(schema.Columns, root[k].toColumn(k, k == "id"))
 	}
+	// Fold any literal dotted keys (rare) under parents — Fields pickers use top-level only.
+	schema.Columns = NestDottedFields(schema.Columns)
 	return schema
 }
 
@@ -131,6 +134,51 @@ func FlattenColumnPaths(cols []connectors.ColumnSchema) []connectors.ColumnSchem
 		}
 	}
 	walk("", cols, true)
+	return out
+}
+
+// NestDottedFields folds dotted field names (e.g. "posts.title") into
+// ColumnSchema.Columns under their parent. Used when a store exposes nested
+// paths as top-level names (Typesense enable_nested_fields). Root object /
+// object[] fields stay; dotted siblings leave the root list.
+// Explore Filters still reach nested paths via FlattenColumnPaths / UI flatten.
+func NestDottedFields(cols []connectors.ColumnSchema) []connectors.ColumnSchema {
+	byRoot := map[string]connectors.ColumnSchema{}
+	var order []string
+	nested := map[string][]connectors.ColumnSchema{}
+
+	for _, c := range cols {
+		if c.Name == "" {
+			continue
+		}
+		name, rest, dotted := strings.Cut(c.Name, ".")
+		if !dotted {
+			if _, exists := byRoot[name]; !exists {
+				order = append(order, name)
+			}
+			byRoot[name] = c
+			continue
+		}
+		child := c
+		child.Name = rest
+		nested[name] = append(nested[name], child)
+		if _, exists := byRoot[name]; !exists {
+			order = append(order, name)
+			byRoot[name] = connectors.ColumnSchema{Name: name, Type: connectors.FieldTypeObject}
+		}
+	}
+
+	out := make([]connectors.ColumnSchema, 0, len(order))
+	for _, name := range order {
+		col := byRoot[name]
+		if kids := nested[name]; len(kids) > 0 {
+			col.Columns = NestDottedFields(kids)
+			if col.Type != connectors.FieldTypeObject && col.Type != connectors.FieldTypeObjectArray {
+				col.Type = connectors.FieldTypeObject
+			}
+		}
+		out = append(out, col)
+	}
 	return out
 }
 

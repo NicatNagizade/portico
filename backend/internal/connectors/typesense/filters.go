@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/portico/backend/internal/connectors"
+	"github.com/portico/backend/internal/connectors/docutil"
 	"github.com/portico/backend/internal/models"
 )
 
@@ -30,6 +31,7 @@ func BuildFilterBy(filters []connectors.Filter) (filterBy string, ok bool) {
 }
 
 func filterClause(col, op, value string) (string, bool) {
+	col = docutil.IDFilterColumn(col, op, col, SortableIDField)
 	switch op {
 	case models.RuleOperatorEq:
 		return col + ":=" + quoteFilterValue(value), true

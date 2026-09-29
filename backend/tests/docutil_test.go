@@ -79,6 +79,59 @@ func TestDocutilSchemaFromDocs(t *testing.T) {
 	}
 }
 
+func TestDocutilSchemaFromDocsNestsDottedKeys(t *testing.T) {
+	got := docutil.NestDottedFields([]connectors.ColumnSchema{
+		{Name: "name", Type: connectors.FieldTypeString},
+		{Name: "posts", Type: connectors.FieldTypeObjectArray},
+		{Name: "posts.title", Type: connectors.FieldTypeString},
+		{Name: "posts.id", Type: connectors.FieldTypeInt64},
+		{Name: "posts.comments", Type: connectors.FieldTypeObjectArray},
+		{Name: "posts.comments.body", Type: connectors.FieldTypeString},
+	})
+	if len(got) != 2 {
+		t.Fatalf("expected name + posts at root, got %+v", got)
+	}
+	if got[0].Name != "name" || got[1].Name != "posts" {
+		t.Fatalf("root order: %+v", got)
+	}
+	if got[1].Type != connectors.FieldTypeObjectArray {
+		t.Fatalf("posts type=%q, want object_array", got[1].Type)
+	}
+	byName := map[string]connectors.ColumnSchema{}
+	for _, c := range got[1].Columns {
+		byName[c.Name] = c
+	}
+	if byName["title"].Type != connectors.FieldTypeString {
+		t.Fatalf("posts.title=%+v", byName["title"])
+	}
+	if byName["id"].Type != connectors.FieldTypeInt64 {
+		t.Fatalf("posts.id=%+v", byName["id"])
+	}
+	comments, ok := byName["comments"]
+	if !ok || comments.Type != connectors.FieldTypeObjectArray {
+		t.Fatalf("posts.comments=%+v", comments)
+	}
+	if len(comments.Columns) != 1 || comments.Columns[0].Name != "body" {
+		t.Fatalf("posts.comments nested=%+v", comments.Columns)
+	}
+
+	// SchemaFromDocs also folds literal dotted keys under parents.
+	schema := docutil.SchemaFromDocs([]map[string]any{
+		{"id": "1", "posts.title": "hello", "name": "Ada"},
+	})
+	root := map[string]connectors.ColumnSchema{}
+	for _, c := range schema.Columns {
+		root[c.Name] = c
+	}
+	if _, ok := root["posts.title"]; ok {
+		t.Fatalf("dotted key should not stay at root: %+v", schema.Columns)
+	}
+	posts, ok := root["posts"]
+	if !ok || len(posts.Columns) != 1 || posts.Columns[0].Name != "title" {
+		t.Fatalf("expected posts.title nested under posts, got %+v", posts)
+	}
+}
+
 func TestDocutilMatchFiltersNestedPath(t *testing.T) {
 	row := map[string]any{
 		"posts": []any{

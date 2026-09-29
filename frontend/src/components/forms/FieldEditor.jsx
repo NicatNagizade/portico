@@ -2,10 +2,7 @@ import { Fragment, useState } from 'react'
 import { DESTINATION_TYPES } from '../../lib/destinationTypes'
 import { columnNames } from '../../lib/sourceColumns'
 import AutocompleteInput from '../AutocompleteInput'
-import { IconButton, SecondaryButton, Toggle } from '../ui'
-
-const compactInput =
-  'w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-soft)]'
+import { Checkbox, IconButton, SecondaryButton, compactInputClassName } from '../ui'
 
 function emptyValue() {
   return {
@@ -161,7 +158,7 @@ export default function FieldEditor({
                     <tr className="border-b border-[var(--border)] last:border-b-0">
                       <td className="px-2 py-1.5">
                         <AutocompleteInput
-                          className={compactInput}
+                          className={compactInputClassName}
                           options={nameOptions}
                           value={row.source_name}
                           onFocus={onNeedSourceColumns}
@@ -172,7 +169,7 @@ export default function FieldEditor({
                       </td>
                       <td className="px-2 py-1.5">
                         <input
-                          className={compactInput}
+                          className={compactInputClassName}
                           value={row.destination_name || ''}
                           onChange={(e) => updateRow(index, { destination_name: e.target.value })}
                           placeholder="same as source"
@@ -180,7 +177,7 @@ export default function FieldEditor({
                       </td>
                       <td className="px-2 py-1.5">
                         <select
-                          className={compactInput}
+                          className={compactInputClassName}
                           value={row.destination_type || ''}
                           onChange={(e) => updateRow(index, { destination_type: e.target.value })}
                         >
@@ -207,7 +204,7 @@ export default function FieldEditor({
                       </td>
                       <td className="px-2 py-1.5 text-center align-middle">
                         <div className="flex justify-center">
-                          <Toggle
+                          <Checkbox
                             checked={row.active !== false}
                             onChange={(on) => updateRow(index, { active: on })}
                             aria-label="Active"
@@ -239,7 +236,7 @@ export default function FieldEditor({
                                 {values.map((v, vi) => (
                                   <div key={v.id ?? `v-${index}-${vi}`} className="flex items-center gap-2">
                                     <input
-                                      className={`${compactInput} max-w-[10rem]`}
+                                      className={`${compactInputClassName} max-w-[10rem]`}
                                       value={v.source_value}
                                       onChange={(e) =>
                                         updateValue(index, vi, { source_value: e.target.value })
@@ -249,7 +246,7 @@ export default function FieldEditor({
                                     />
                                     <span className="text-[var(--text-muted)]">→</span>
                                     <input
-                                      className={`${compactInput} max-w-[12rem]`}
+                                      className={`${compactInputClassName} max-w-[12rem]`}
                                       value={v.destination_value}
                                       onChange={(e) =>
                                         updateValue(index, vi, { destination_value: e.target.value })

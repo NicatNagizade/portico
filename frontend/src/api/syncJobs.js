@@ -47,10 +47,14 @@ export function exploreSyncJob(
   })
 }
 
-export function exportSyncJobCSV(id, { side, filters = [] } = {}) {
+export function exportSyncJobCSV(id, { side, filters = [], fields } = {}) {
   const body = { side }
   if (filters.length) {
     body.filters = filters
+  }
+  // null/undefined = all columns; array (including empty) = only those fields
+  if (fields != null) {
+    body.fields = fields
   }
   return download(`/sync-jobs/${id}/explore/export`, {
     method: 'POST',

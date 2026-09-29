@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/portico/backend/internal/connectors"
+	"github.com/portico/backend/internal/connectors/docutil"
 	"github.com/portico/backend/internal/models"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -18,6 +19,10 @@ import (
 
 // Shorter than the driver's 30s default so unreachable hosts fail quickly on check/Open.
 const connectTimeout = 2 * time.Second
+
+// SortableIDField holds a numeric copy of document id for sorting.
+// MongoDB "_id" is always a string document key (Portico "id"); id_int is the int companion.
+const SortableIDField = "id_int"
 
 type Config struct {
 	Host       string `json:"host"`
@@ -158,26 +163,34 @@ func (d *Destination) WriteBatch(ctx context.Context, name string, docs []map[st
 	return nil
 }
 
-// DocForWrite copies doc and maps Portico "id" onto MongoDB "_id" (string).
+// DocForWrite copies doc, maps Portico "id" onto MongoDB "_id" (string),
+// and sets id_int from a numeric document id when possible.
 func DocForWrite(doc map[string]any) map[string]any {
-	out := make(map[string]any, len(doc)+1)
+	out := make(map[string]any, len(doc)+2)
 	for k, v := range doc {
-		if k == "id" {
+		if k == "id" || k == SortableIDField {
 			continue
 		}
 		out[k] = v
 	}
 	if id, ok := doc["id"]; ok && id != nil && fmt.Sprint(id) != "" {
 		out["_id"] = fmt.Sprint(id)
+		if n, ok := docutil.ParseInt64(id); ok {
+			out[SortableIDField] = n
+		}
 	}
 	return out
 }
 
 // DocFromRead copies a stored document and maps "_id" back to "id" for explore/UI.
 // Nested BSON maps/arrays are normalized to map[string]any / []any.
+// id_int is an internal sortable copy of id — hidden from explore/UI.
 func DocFromRead(doc map[string]any) map[string]any {
 	out := make(map[string]any, len(doc))
 	for k, v := range doc {
+		if k == SortableIDField {
+			continue
+		}
 		if k == "_id" {
 			out["id"] = normalizeID(v)
 			continue
@@ -250,7 +263,7 @@ func (d *Destination) Query(ctx context.Context, name string, filters []connecto
 
 	findOpts := options.Find().SetSkip(int64(offset)).SetLimit(int64(limit))
 	if order != nil && strings.TrimSpace(order.Column) != "" {
-		col := filterColumn(order.Column)
+		col := docutil.SortColumn(order.Column, SortableIDField)
 		dir := 1
 		if order.Desc {
 			dir = -1

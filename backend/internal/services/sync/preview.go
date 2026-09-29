@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/portico/backend/internal/connectors"
+	"github.com/portico/backend/internal/connectors/docutil"
 	"github.com/portico/backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -80,6 +81,16 @@ func normalizeExploreSort(sortBy, sortDir string) (string, string, *connectors.O
 	return sortBy, sortDir, &connectors.Order{Column: sortBy, Desc: sortDir == "desc"}, nil
 }
 
+// primaryKeyName returns the first primary-key column, or "id" when unknown.
+func primaryKeyName(schema *connectors.TableSchema) string {
+	if schema != nil {
+		if pks := primaryKeyColumns(schema); len(pks) > 0 && pks[0] != "" {
+			return pks[0]
+		}
+	}
+	return "id"
+}
+
 func (o *Orchestrator) loadJob(jobID uint) (*models.SyncJob, error) {
 	var job models.SyncJob
 	err := o.db.
@@ -120,6 +131,18 @@ func (o *Orchestrator) Preview(ctx context.Context, jobID uint, side string, pag
 	job, err := o.loadJob(jobID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Default sort: source primary key, or document id on destination.
+	if order == nil {
+		pk := "id"
+		if side == SideSource {
+			pk = primaryKeyName(o.sourceSchema(ctx, job))
+		}
+		sortBy, sortDir, order, err = normalizeExploreSort(pk, "asc")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	offset := (page - 1) * pageSize
@@ -172,13 +195,33 @@ func (o *Orchestrator) previewSource(ctx context.Context, job *models.SyncJob, l
 		return nil, nil, 0, fmt.Errorf("introspect schema: %w", err)
 	}
 
+	displayOrder := order
 	sourceOrder, err := resolveSourceOrder(schema, job.Fields, order)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
 	extra = resolveSourceFilters(job.Fields, extra)
-	filters := append(ActiveFilters(job.Rules), extra...)
+	rootExtra, nestedExtra := splitNestedFilters(extra)
+	filters := append(ActiveFilters(job.Rules), rootExtra...)
+
+	// Nested paths (user.bio) map through sync-job relations to GORM IN-subqueries
+	// (belongs_to → user_id IN (SELECT id FROM users WHERE bio = ?)).
+	if len(nestedExtra) > 0 {
+		if _, ok := src.(connectors.RelationFilterSupport); ok {
+			pushed, remaining, err := pushNestedFilters(ctx, src, job, schema, nestedExtra)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			filters = append(filters, pushed...)
+			if len(remaining) > 0 {
+				return previewSourceNested(ctx, src, job, schema, filters, remaining, displayOrder, limit, offset)
+			}
+		} else {
+			return previewSourceNested(ctx, src, job, schema, filters, nestedExtra, displayOrder, limit, offset)
+		}
+	}
+
 	total, err := src.Count(ctx, job.SourceTable, filters)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("count source rows: %w", err)
@@ -194,6 +237,193 @@ func (o *Orchestrator) previewSource(ctx context.Context, job *models.SyncJob, l
 	connectors.EnsureID(docs, schema, int64(offset))
 	ApplyFields(docs, job.Fields)
 	return docs, exploreColumns(schema, job, docs), total, nil
+}
+
+// previewSourceNested loads root rows matching SQL filters, enriches relations,
+// applies dotted-path filters in memory, then sorts and pages.
+func previewSourceNested(
+	ctx context.Context,
+	src connectors.SourceReader,
+	job *models.SyncJob,
+	schema *connectors.TableSchema,
+	rootFilters, nestedFilters []connectors.Filter,
+	order *connectors.Order,
+	limit, offset int,
+) ([]map[string]any, []string, int64, error) {
+	var matched []map[string]any
+	err := src.ReadChunks(ctx, job.SourceTable, ExploreExportChunkSize, rootFilters, func(batch []map[string]any) error {
+		docs := docutil.CloneRows(batch)
+		if err := enrichDocs(ctx, src, job, schema, docs); err != nil {
+			return err
+		}
+		connectors.EnsureID(docs, schema, 0)
+		ApplyFields(docs, job.Fields)
+		matched = append(matched, docutil.FilterRows(docs, nestedFilters)...)
+		return nil
+	})
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("query source rows: %w", err)
+	}
+	docutil.SortRows(matched, order)
+	total := int64(len(matched))
+	page := docutil.PageRows(matched, limit, offset)
+	return page, exploreColumns(schema, job, page), total, nil
+}
+
+func splitNestedFilters(filters []connectors.Filter) (root, nested []connectors.Filter) {
+	for _, f := range filters {
+		if strings.Contains(f.Column, ".") {
+			nested = append(nested, f)
+		} else {
+			root = append(root, f)
+		}
+	}
+	return root, nested
+}
+
+func canPushNestedOperator(op string) bool {
+	switch op {
+	case models.RuleOperatorEq, models.RuleOperatorIn, models.RuleOperatorLike,
+		models.RuleOperatorGt, models.RuleOperatorGte, models.RuleOperatorLt, models.RuleOperatorLte,
+		models.RuleOperatorIsNotNull:
+		return true
+	default:
+		return false
+	}
+}
+
+// pushNestedFilters turns one-hop relation filters (user.bio) into root filters with
+// RelationSubquery (GORM: root.fk IN (SELECT … FROM related WHERE …)).
+func pushNestedFilters(
+	ctx context.Context,
+	src connectors.SourceReader,
+	job *models.SyncJob,
+	parentSchema *connectors.TableSchema,
+	nested []connectors.Filter,
+) (pushed, remaining []connectors.Filter, err error) {
+	byName := map[string]models.SyncJobRelation{}
+	for _, rel := range job.Relations {
+		if !rel.IsActive() || rel.ParentID != nil || rel.Name == "" {
+			continue
+		}
+		byName[rel.Name] = rel
+	}
+
+	for _, f := range nested {
+		relName, rest, ok := strings.Cut(f.Column, ".")
+		if !ok || rest == "" || strings.Contains(rest, ".") || !canPushNestedOperator(f.Operator) {
+			remaining = append(remaining, f)
+			continue
+		}
+		rel, ok := byName[relName]
+		if !ok {
+			remaining = append(remaining, f)
+			continue
+		}
+		col := mapDisplayToSource(rel.Fields, rest)
+		if col == "" {
+			col = rest
+		}
+		relatedFilter := connectors.Filter{Column: col, Operator: f.Operator, Value: f.Value}
+		rootFilter, ok, pushErr := relationSubqueryFilter(ctx, src, job, parentSchema, rel, relatedFilter)
+		if pushErr != nil {
+			return nil, nil, pushErr
+		}
+		if !ok {
+			remaining = append(remaining, f)
+			continue
+		}
+		pushed = append(pushed, *rootFilter)
+	}
+	return pushed, remaining, nil
+}
+
+func relationSubqueryFilter(
+	ctx context.Context,
+	src connectors.SourceReader,
+	job *models.SyncJob,
+	parentSchema *connectors.TableSchema,
+	rel models.SyncJobRelation,
+	relatedFilter connectors.Filter,
+) (*connectors.Filter, bool, error) {
+	rel = ResolveRelationKeys(job.SourceTable, rel)
+
+	switch rel.Type {
+	case models.RelationTypeBelongsTo:
+		relatedSchema, err := src.Schema(ctx, rel.Table)
+		if err != nil {
+			return nil, false, fmt.Errorf("relation %q schema: %w", rel.Name, err)
+		}
+		ownerKey := rel.RelatedKey
+		if ownerKey == "" {
+			ownerKey, err = primaryKeyColumn(relatedSchema)
+			if err != nil {
+				return nil, false, fmt.Errorf("relation %q related: %w", rel.Name, err)
+			}
+		}
+		return &connectors.Filter{
+			Column: rel.ForeignKey,
+			Rel: &connectors.RelationSubquery{
+				Table:  rel.Table,
+				Select: ownerKey,
+				Where:  []connectors.Filter{relatedFilter},
+			},
+		}, true, nil
+
+	case models.RelationTypeHasMany, models.RelationTypeHasOne:
+		localKey := rel.RelatedKey
+		if localKey == "" {
+			pk, err := primaryKeyColumn(parentSchema)
+			if err != nil {
+				return nil, false, fmt.Errorf("relation %q parent: %w", rel.Name, err)
+			}
+			localKey = pk
+		}
+		return &connectors.Filter{
+			Column: localKey,
+			Rel: &connectors.RelationSubquery{
+				Table:  rel.Table,
+				Select: rel.ForeignKey,
+				Where:  []connectors.Filter{relatedFilter},
+			},
+		}, true, nil
+
+	case models.RelationTypeBelongsToMany:
+		pivotTable := relationPivotTable(rel)
+		if pivotTable == "" {
+			return nil, false, nil
+		}
+		relatedSchema, err := src.Schema(ctx, rel.Table)
+		if err != nil {
+			return nil, false, fmt.Errorf("relation %q schema: %w", rel.Name, err)
+		}
+		relatedPK, err := primaryKeyColumn(relatedSchema)
+		if err != nil {
+			return nil, false, fmt.Errorf("relation %q related: %w", rel.Name, err)
+		}
+		parentPK, err := primaryKeyColumn(parentSchema)
+		if err != nil {
+			return nil, false, fmt.Errorf("relation %q parent: %w", rel.Name, err)
+		}
+		return &connectors.Filter{
+			Column: parentPK,
+			Rel: &connectors.RelationSubquery{
+				Table:  pivotTable,
+				Select: rel.ForeignKey,
+				Where: []connectors.Filter{{
+					Column: rel.RelatedKey,
+					Rel: &connectors.RelationSubquery{
+						Table:  rel.Table,
+						Select: relatedPK,
+						Where:  []connectors.Filter{relatedFilter},
+					},
+				}},
+			},
+		}, true, nil
+
+	default:
+		return nil, false, nil
+	}
 }
 
 func (o *Orchestrator) previewDestination(ctx context.Context, job *models.SyncJob, limit, offset int, order *connectors.Order, filters []connectors.Filter) ([]map[string]any, []string, int64, error) {
@@ -243,7 +473,8 @@ func (o *Orchestrator) sourceSchema(ctx context.Context, job *models.SyncJob) *c
 }
 
 // ExportCSV writes matching explore rows as CSV, reading in chunks so large tables work.
-func (o *Orchestrator) ExportCSV(ctx context.Context, jobID uint, side string, w io.Writer, exploreFilters []FilterInput) (filename string, err error) {
+// fields nil = all columns; non-nil (including empty) = only those columns that exist, in natural order.
+func (o *Orchestrator) ExportCSV(ctx context.Context, jobID uint, side string, w io.Writer, exploreFilters []FilterInput, fields []string) (filename string, err error) {
 	side = strings.TrimSpace(strings.ToLower(side))
 	if side != SideSource && side != SideDestination {
 		return "", ErrInvalidSide
@@ -273,10 +504,7 @@ func (o *Orchestrator) ExportCSV(ctx context.Context, jobID uint, side string, w
 			return "", err
 		}
 		if offset == 0 {
-			headers = cols
-			if headers == nil {
-				headers = []string{}
-			}
+			headers = filterExportColumns(cols, fields)
 			if err := cw.Write(headers); err != nil {
 				return "", err
 			}
@@ -312,6 +540,31 @@ func (o *Orchestrator) ExportCSV(ctx context.Context, jobID uint, side string, w
 		safeName = fmt.Sprintf("sync-job-%d", job.ID)
 	}
 	return fmt.Sprintf("%s-%s.csv", safeName, side), nil
+}
+
+// filterExportColumns keeps natural column order. fields nil = all; otherwise only matching names.
+func filterExportColumns(cols []string, fields []string) []string {
+	if fields == nil {
+		if cols == nil {
+			return []string{}
+		}
+		return cols
+	}
+	want := make(map[string]struct{}, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		want[f] = struct{}{}
+	}
+	out := make([]string, 0, len(want))
+	for _, c := range cols {
+		if _, ok := want[c]; ok {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // exploreColumns returns field names in schema/relation/field-mapping order,

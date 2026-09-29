@@ -42,8 +42,8 @@ func Close(db *gorm.DB) error {
 }
 
 // Count applies filters and returns row count.
-func Count(ctx context.Context, db *gorm.DB, filters []connectors.Filter, quoteIdent func(string) string) (int64, error) {
-	q, err := ApplyFilters(db.WithContext(ctx), filters, quoteIdent)
+func Count(ctx context.Context, db *gorm.DB, filters []connectors.Filter, quoteIdent, quoteTable func(string) string) (int64, error) {
+	q, err := ApplyFilters(db.WithContext(ctx), filters, quoteIdent, quoteTable)
 	if err != nil {
 		return 0, err
 	}
@@ -111,10 +111,10 @@ func ReadFilteredChunks(
 	db *gorm.DB,
 	chunkSize int,
 	filters []connectors.Filter,
-	quoteIdent func(string) string,
+	quoteIdent, quoteTable func(string) string,
 	fn func([]map[string]any) error,
 ) error {
-	q, err := ApplyFilters(db, filters, quoteIdent)
+	q, err := ApplyFilters(db, filters, quoteIdent, quoteTable)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func QueryPage(
 	db *gorm.DB,
 	columns []string,
 	filters []connectors.Filter,
-	quoteIdent func(string) string,
+	quoteIdent, quoteTable func(string) string,
 	limit, offset int,
 	order *connectors.Order,
 ) ([]map[string]any, error) {
@@ -167,7 +167,7 @@ func QueryPage(
 	if offset < 0 {
 		offset = 0
 	}
-	q, err := ApplyFilters(db.WithContext(ctx), filters, quoteIdent)
+	q, err := ApplyFilters(db.WithContext(ctx), filters, quoteIdent, quoteTable)
 	if err != nil {
 		return nil, err
 	}

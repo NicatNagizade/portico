@@ -196,6 +196,7 @@ type ExploreRequest struct {
 type ExploreExportRequest struct {
 	Side    string             `json:"side" binding:"required" example:"source"`
 	Filters []sync.FilterInput `json:"filters"`
+	Fields  []string           `json:"fields"` // omit = all columns; empty = none
 }
 
 // ExploreSyncJob godoc
@@ -231,7 +232,7 @@ func (h *Handlers) ExploreSyncJob(c *gin.Context) {
 
 // ExportSyncJobExplore godoc
 // @Summary Export sync job explore data as CSV
-// @Description Downloads matching source or destination rows as CSV. Optional filters match the explore preview.
+// @Description Downloads matching source or destination rows as CSV. Optional filters match the explore preview. Optional fields limits CSV columns (omit for all).
 // @Tags sync-jobs
 // @Accept json
 // @Produce text/csv
@@ -253,7 +254,7 @@ func (h *Handlers) ExportSyncJobExplore(c *gin.Context) {
 		return
 	}
 	var buf bytes.Buffer
-	filename, err := h.Sync.ExportCSV(c.Request.Context(), id, req.Side, &buf, req.Filters)
+	filename, err := h.Sync.ExportCSV(c.Request.Context(), id, req.Side, &buf, req.Filters, req.Fields)
 	if err != nil {
 		writeErr(c, err, nil)
 		return

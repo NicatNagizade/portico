@@ -80,16 +80,18 @@ func (s *Source) table(table string) *gorm.DB {
 }
 
 func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
-	return sqlutil.Count(ctx, s.table(table), filters, quoteIdent)
+	return sqlutil.Count(ctx, s.table(table), filters, quoteIdent, nil)
 }
 
 func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
-	return sqlutil.ReadFilteredChunks(ctx, s.table(table), chunkSize, filters, quoteIdent, fn)
+	return sqlutil.ReadFilteredChunks(ctx, s.table(table), chunkSize, filters, quoteIdent, nil, fn)
 }
 
 func (s *Source) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
-	return sqlutil.QueryPage(ctx, s.table(table), columns, filters, quoteIdent, limit, offset, order)
+	return sqlutil.QueryPage(ctx, s.table(table), columns, filters, quoteIdent, nil, limit, offset, order)
 }
+
+func (s *Source) SupportsRelationFilters() bool { return true }
 
 func (s *Source) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
 	return sqlutil.QueryRows(ctx, s.table(table), columns, whereColumn, whereValues, quoteIdent)

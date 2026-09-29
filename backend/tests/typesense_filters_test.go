@@ -32,6 +32,28 @@ func TestBuildFilterBy(t *testing.T) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 
+	got, ok = typesense.BuildFilterBy([]connectors.Filter{
+		{Column: "id", Operator: models.RuleOperatorLt, Value: "10"},
+	})
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	want = typesense.SortableIDField + ":<10"
+	if got != want {
+		t.Fatalf("id range got %q want %q", got, want)
+	}
+
+	got, ok = typesense.BuildFilterBy([]connectors.Filter{
+		{Column: "id", Operator: models.RuleOperatorEq, Value: "42"},
+	})
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	want = "id:=`42`"
+	if got != want {
+		t.Fatalf("id eq got %q want %q", got, want)
+	}
+
 	_, ok = typesense.BuildFilterBy([]connectors.Filter{
 		{Column: "name", Operator: models.RuleOperatorLike, Value: "%ada%"},
 	})

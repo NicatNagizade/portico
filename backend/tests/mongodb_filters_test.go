@@ -29,11 +29,22 @@ func TestMongoBuildFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	want = bson.D{{Key: "$and", Value: bson.A{
-		bson.D{{Key: "_id", Value: int64(42)}},
+		bson.D{{Key: "_id", Value: "42"}}, // document _id is always string
 		bson.D{{Key: "status", Value: bson.D{{Key: "$in", Value: []any{"a", "b"}}}}},
 	}}}
 	if !bsonEqual(got, want) {
 		t.Fatalf("got %#v want %#v", got, want)
+	}
+
+	got, err = mongodb.BuildFilter([]connectors.Filter{
+		{Column: "id", Operator: models.RuleOperatorLt, Value: "10"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = bson.D{{Key: mongodb.SortableIDField, Value: bson.D{{Key: "$lt", Value: int64(10)}}}}
+	if !bsonEqual(got, want) {
+		t.Fatalf("id range got %#v want %#v", got, want)
 	}
 
 	got, err = mongodb.BuildFilter([]connectors.Filter{

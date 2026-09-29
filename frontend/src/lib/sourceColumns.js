@@ -6,6 +6,16 @@ export function columnNames(columns = []) {
 }
 
 /**
+ * Top-level column names for the explore Fields picker / CSV column selection.
+ * Does not flatten nested relation fields (those stay as whole relations).
+ * Skips dotted names (e.g. Typesense posts.title) if a schema still exposes them.
+ * Explore Filters should use flattenColumnNames instead.
+ */
+export function selectableColumnNames(columns = []) {
+  return columnNames(columns).filter((name) => !String(name).includes('.'))
+}
+
+/**
  * Flatten nested schema columns into dotted paths (e.g. posts.title).
  * Used by explore filters when the side connection is a document store.
  */
@@ -37,7 +47,7 @@ export function fieldsFromSourceColumns(columns = [], existing = []) {
   return columns
     .map((col) => {
       const name = typeof col === 'string' ? col : col?.name
-      if (!name) return null
+      if (!name || String(name).includes('.')) return null
       const type = typeof col === 'string' ? '' : col?.type || ''
       const prev = bySource.get(name)
       return {

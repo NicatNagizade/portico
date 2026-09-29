@@ -6,8 +6,10 @@ import {
   getSyncJob,
   listSyncJobs,
 } from '../api/syncJobs'
+import ExploreFields from '../components/forms/ExploreFields'
 import ExploreFilters from '../components/forms/ExploreFilters'
 import {
+  Dialog,
   EmptyState,
   ErrorBanner,
   Field,
@@ -24,8 +26,8 @@ import {
   inputClassName,
 } from '../components/ui'
 import useConnectionSchema from '../hooks/useConnectionSchema'
-import { ruleNeedsValue } from '../lib/ruleOperators'
-import { flattenColumnNames } from '../lib/sourceColumns'
+import { ruleNeedsValue, ruleOperatorLabel } from '../lib/ruleOperators'
+import { flattenColumnNames, selectableColumnNames } from '../lib/sourceColumns'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 const DEFAULT_PAGE_SIZE = 50
@@ -44,57 +46,51 @@ function cellDisplay(value, pretty = false) {
 }
 
 function RowDetailDialog({ row, columns, onClose }) {
-  if (!row) return null
-
   return (
-    <div
-      className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-[#12181f]/45 p-4 backdrop-blur-sm"
-      onClick={onClose}
+    <Dialog
+      open={!!row}
+      title="Row detail"
+      description="Full values for every column in this row."
+      onClose={onClose}
+      size="lg"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Row detail"
-        className="animate-dialog-in flex max-h-[min(90vh,720px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lg)]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-[var(--text)]">Row detail</h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">
-              Full values for every column in this row.
-            </p>
-          </div>
-          <GhostButton type="button" onClick={onClose}>
-            Close
-          </GhostButton>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <dl className="space-y-4">
-            {columns.map((col) => {
-              const text = cellDisplay(row[col], true)
-              return (
-                <div key={col}>
-                  <dt className="font-mono text-[11px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
-                    {col}
-                  </dt>
-                  <dd className="mt-1.5">
-                    {text === '' ? (
-                      <span className="text-sm text-[var(--text-muted)] italic">empty</span>
-                    ) : (
-                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--bg-elevated)] p-3 font-mono text-xs leading-relaxed text-[var(--text)]">
-                        {text}
-                      </pre>
-                    )}
-                  </dd>
-                </div>
-              )
-            })}
-          </dl>
-        </div>
-      </div>
-    </div>
+      {row ? (
+        <dl className="space-y-4">
+          {columns.map((col) => {
+            const text = cellDisplay(row[col], true)
+            return (
+              <div key={col}>
+                <dt className="font-mono text-[11px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
+                  {col}
+                </dt>
+                <dd className="mt-1.5">
+                  {text === '' ? (
+                    <span className="text-sm text-[var(--text-muted)] italic">empty</span>
+                  ) : (
+                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--bg-elevated)] p-3 font-mono text-xs leading-relaxed text-[var(--text)]">
+                      {text}
+                    </pre>
+                  )}
+                </dd>
+              </div>
+            )
+          })}
+        </dl>
+      ) : null}
+    </Dialog>
   )
+}
+
+function visibleColumns(allColumns, selectedFields) {
+  if (selectedFields === null) return allColumns
+  const set = new Set(selectedFields)
+  return allColumns.filter((col) => set.has(col))
+}
+
+function filterChipLabel(f) {
+  const op = ruleOperatorLabel(f.operator)
+  if (!ruleNeedsValue(f.operator)) return `${f.field} ${op}`
+  return `${f.field} ${op} ${f.value}`
 }
 
 function PreviewIcon() {
@@ -134,6 +130,40 @@ function ExternalLinkIcon() {
   )
 }
 
+function FilterIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 6h16M7 12h10M10 18h4"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function ColumnsIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M5 5h4v14H5V5Zm10 0h4v14h-4V5ZM11 5h2v14h-2V5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function CloseChipIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 function SideToggle({ value, onChange, disabled }) {
   return (
     <div
@@ -169,6 +199,42 @@ function SideToggle({ value, onChange, disabled }) {
   )
 }
 
+/** Quiet control that opens a dialog; accent when something is configured. */
+function RefineButton({ active, count, icon, label, detail, onClick, disabled }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={[
+        'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-all active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50',
+        active
+          ? 'border-[var(--accent)]/35 bg-[var(--accent-soft)] text-[var(--accent-ink)] shadow-[var(--shadow-sm)]'
+          : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-sm)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)]',
+      ].join(' ')}
+    >
+      <span className={active ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}>{icon}</span>
+      <span>{label}</span>
+      {detail ? (
+        <span
+          className={[
+            'rounded-md px-1.5 py-0.5 font-mono text-[11px]',
+            active
+              ? 'bg-[var(--surface)]/80 text-[var(--accent-ink)]'
+              : 'bg-[var(--bg-elevated)] text-[var(--text-muted)]',
+          ].join(' ')}
+        >
+          {detail}
+        </span>
+      ) : count ? (
+        <span className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-white">
+          {count}
+        </span>
+      ) : null}
+    </button>
+  )
+}
+
 function resetPreviewState() {
   return {
     page: 1,
@@ -200,25 +266,36 @@ function columnsFromRows(rows, preferred = []) {
   return out
 }
 
-function jobFieldOptions(job) {
-  const seen = new Set()
-  const out = []
-  const add = (name) => {
-    const n = name?.trim()
-    if (!n || seen.has(n)) return
-    seen.add(n)
-    out.push(n)
+/** Job field overrides + top-level relation names (whole nested docs, not nested paths). */
+function jobColumnOptions(job) {
+  const { out, add } = uniqueNames()
+  addJobFields(job, add)
+  for (const r of job?.relations || []) {
+    if (r.active === false) continue
+    add(r.name)
   }
-  for (const f of job?.fields || []) {
-    if (f.active === false) continue
-    add(f.destination_name || f.source_name)
-    add(f.source_name)
-  }
+  return out
+}
+
+/** Filter autocomplete: relation names plus nested relation table columns (posts.title). */
+function jobFilterFieldOptions(job, columnsByTable = {}) {
+  const { out, add } = uniqueNames()
+  addJobFields(job, add)
   function addRelation(rel, prefix) {
     const name = rel.name?.trim()
     if (!name) return
     const path = prefix ? `${prefix}.${name}` : name
     add(path)
+    for (const f of rel.fields || []) {
+      if (f.active === false) continue
+      add(`${path}.${f.destination_name || f.source_name}`)
+      add(`${path}.${f.source_name}`)
+    }
+    const table = rel.table?.trim()
+    for (const col of columnsByTable[table] || []) {
+      const colName = typeof col === 'string' ? col : col?.name
+      if (colName) add(`${path}.${colName}`)
+    }
     for (const child of rel.relations || []) {
       if (child.active === false) continue
       addRelation(child, path)
@@ -231,15 +308,79 @@ function jobFieldOptions(job) {
   return out
 }
 
+function uniqueNames() {
+  const seen = new Set()
+  const out = []
+  return {
+    out,
+    add(name) {
+      const n = typeof name === 'string' ? name.trim() : name
+      if (!n || seen.has(n)) return
+      seen.add(n)
+      out.push(n)
+    },
+  }
+}
+
+function addJobFields(job, add) {
+  for (const f of job?.fields || []) {
+    if (f.active === false) continue
+    add(f.destination_name || f.source_name)
+    add(f.source_name)
+  }
+}
+
+function relationTables(relations, out = []) {
+  for (const r of relations || []) {
+    if (r.active === false) continue
+    const table = r.table?.trim()
+    if (table && !out.includes(table)) out.push(table)
+    relationTables(r.relations, out)
+  }
+  return out
+}
+
+function prefetchSchemaColumns(ensureColumns, schemaTable, side, job) {
+  if (schemaTable) ensureColumns(schemaTable)
+  if (side === 'source' && job) {
+    for (const table of relationTables(job.relations)) {
+      ensureColumns(table)
+    }
+  }
+}
+
+function isActiveExploreFilter(f) {
+  if (!f.field?.trim()) return false
+  if (ruleNeedsValue(f.operator) && String(f.value ?? '').trim() === '') return false
+  return true
+}
+
 function activeExploreFilters(filters) {
-  return filters
-    .filter((f) => f.field?.trim())
-    .filter((f) => !ruleNeedsValue(f.operator) || String(f.value ?? '').trim() !== '')
-    .map((f) => ({
-      field: f.field.trim(),
-      operator: f.operator,
-      value: ruleNeedsValue(f.operator) ? String(f.value ?? '') : '',
-    }))
+  return filters.filter(isActiveExploreFilter).map((f) => ({
+    field: f.field.trim(),
+    operator: f.operator,
+    value: ruleNeedsValue(f.operator) ? String(f.value ?? '') : '',
+  }))
+}
+
+/** Indexes in `filters` that are currently active (valid field + value when needed). */
+function activeFilterIndexes(filters) {
+  const indexes = []
+  filters.forEach((f, i) => {
+    if (isActiveExploreFilter(f)) indexes.push(i)
+  })
+  return indexes
+}
+
+function mergeUnique(lists, { skipDotted = false } = {}) {
+  const { out, add } = uniqueNames()
+  for (const list of lists) {
+    for (const name of list || []) {
+      if (skipDotted && String(name).includes('.')) continue
+      add(name)
+    }
+  }
+  return out
 }
 
 export default function ExplorePage() {
@@ -251,6 +392,9 @@ export default function ExplorePage() {
   const [side, setSide] = useState('source')
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [filters, setFilters] = useState([])
+  const [selectedFields, setSelectedFields] = useState(null) // null = show all
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [fieldsOpen, setFieldsOpen] = useState(false)
   const [preview, setPreview] = useState(resetPreviewState)
   const [queryLoading, setQueryLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -261,22 +405,25 @@ export default function ExplorePage() {
     side === 'source' ? job?.source_connection_id : job?.destination_connection_id
   const schemaTable = side === 'source' ? job?.source_table : job?.destination_table
   const { columnsByTable, ensureColumns } = useConnectionSchema(schemaConnectionId)
-  // Side connection schema (Mongo/Typesense/Redis include nested relation paths when present).
-  const schemaColumnNames = flattenColumnNames(columnsByTable[schemaTable?.trim()] || [])
+  const schemaColumns = columnsByTable[schemaTable?.trim()] || []
+  // Filters: nested dotted paths (e.g. posts.title). Fields picker: top-level + whole relations only.
+  const filterFieldOptions = mergeUnique([
+    preview.columns,
+    jobFilterFieldOptions(job, columnsByTable),
+    flattenColumnNames(schemaColumns),
+  ])
+  const selectableFields = mergeUnique(
+    [preview.columns, jobColumnOptions(job), selectableColumnNames(schemaColumns)],
+    { skipDotted: true },
+  )
 
-  const fieldOptions = (() => {
-    const seen = new Set()
-    const out = []
-    const add = (name) => {
-      if (!name || seen.has(name)) return
-      seen.add(name)
-      out.push(name)
-    }
-    for (const c of preview.columns) add(c)
-    for (const c of jobFieldOptions(job)) add(c)
-    for (const c of schemaColumnNames) add(c)
-    return out
-  })()
+  function clearExploreControls() {
+    setSelectedRow(null)
+    setFilters([])
+    setSelectedFields(null)
+    setFiltersOpen(false)
+    setFieldsOpen(false)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -301,8 +448,7 @@ export default function ExplorePage() {
   useEffect(() => {
     if (!jobId) {
       setJob(null)
-      setSelectedRow(null)
-      setFilters([])
+      clearExploreControls()
       return
     }
     let cancelled = false
@@ -310,8 +456,7 @@ export default function ExplorePage() {
       setJobLoading(true)
       setError('')
       setPreview(resetPreviewState())
-      setSelectedRow(null)
-      setFilters([])
+      clearExploreControls()
       try {
         const data = await getSyncJob(jobId)
         if (!cancelled) setJob(data)
@@ -330,11 +475,15 @@ export default function ExplorePage() {
     }
   }, [jobId])
 
-  // Prefetch side-table schema so nested collection fields appear in filter autocomplete.
+  // Prefetch side-table schema (+ related tables on source) for filter/field autocomplete.
   useEffect(() => {
-    if (!job || !schemaTable) return
-    ensureColumns(schemaTable)
-  }, [job, schemaTable, side])
+    if (!job) return
+    prefetchSchemaColumns(ensureColumns, schemaTable, side, job)
+  }, [job, schemaTable, side, schemaConnectionId])
+
+  function prefetchFilterFields() {
+    prefetchSchemaColumns(ensureColumns, schemaTable, side, job)
+  }
 
   async function runQuery(
     nextPage = 1,
@@ -381,7 +530,11 @@ export default function ExplorePage() {
     setExporting(true)
     setError('')
     try {
-      await exportSyncJobCSV(jobId, { side, filters: activeExploreFilters(filters) })
+      await exportSyncJobCSV(jobId, {
+        side,
+        filters: activeExploreFilters(filters),
+        fields: selectedFields,
+      })
     } catch (err) {
       setError(err.message || 'Failed to download CSV')
     } finally {
@@ -394,6 +547,7 @@ export default function ExplorePage() {
     setSide(next)
     setPreview(resetPreviewState())
     setSelectedRow(null)
+    setSelectedFields(null)
   }
 
   function changePageSize(next) {
@@ -407,6 +561,7 @@ export default function ExplorePage() {
     if (preview.sortBy === col) {
       if (preview.sortDir === 'asc') nextDir = 'desc'
       else {
+        // Clear client sort — API defaults back to primary key ascending.
         nextBy = ''
         nextDir = 'asc'
       }
@@ -414,12 +569,44 @@ export default function ExplorePage() {
     runQuery(1, nextBy, nextDir)
   }
 
+  function openFilters() {
+    prefetchFilterFields()
+    setFiltersOpen(true)
+  }
+
+  function openFields() {
+    if (schemaTable) ensureColumns(schemaTable)
+    setFieldsOpen(true)
+  }
+
+  function removeFilterAt(index) {
+    setFilters((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function clearFilters() {
+    setFilters([])
+  }
+
+  function resetFields() {
+    setSelectedFields(null)
+  }
+
   const { page, rows, columns, sortBy, sortDir, total, totalPages, hasRun } = preview
+  const displayColumns = visibleColumns(columns, selectedFields)
   const busy = queryLoading || exporting
   const ruleCount = job?.rules?.length ?? 0
-  const fieldCount = job?.fields?.length ?? 0
   const relationCount = job?.relations?.length ?? 0
-  const filterCount = activeExploreFilters(filters).length
+  const filterIndexes = activeFilterIndexes(filters)
+  const filterCount = filterIndexes.length
+  const fieldsCustom = selectedFields !== null
+  const columnTotal = columns.length || selectableFields.length
+  const visibleFieldCount =
+    selectedFields === null ? columnTotal : selectedFields.length
+  const fieldsDetail = fieldsCustom
+    ? `${visibleFieldCount}/${columnTotal || visibleFieldCount}`
+    : columnTotal
+      ? `all ${columnTotal}`
+      : 'all'
 
   return (
     <div>
@@ -493,19 +680,6 @@ export default function ExplorePage() {
               </div>
             </div>
 
-            {jobId ? (
-              <div className="mt-4 border-t border-[var(--border)] pt-4">
-                <ExploreFilters
-                  filters={filters}
-                  onChange={setFilters}
-                  fieldOptions={fieldOptions}
-                  onNeedFields={() => {
-                    if (schemaTable) ensureColumns(schemaTable)
-                  }}
-                />
-              </div>
-            ) : null}
-
             {jobLoading ? (
               <p className="mt-4 border-t border-[var(--border)] pt-4 text-sm text-[var(--text-muted)]">
                 Loading job details…
@@ -517,12 +691,6 @@ export default function ExplorePage() {
                 </MetaChip>
                 <MetaChip>
                   {ruleCount} rule{ruleCount === 1 ? '' : 's'}
-                </MetaChip>
-                <MetaChip>
-                  {filterCount} filter{filterCount === 1 ? '' : 's'}
-                </MetaChip>
-                <MetaChip>
-                  {fieldCount} field{fieldCount === 1 ? '' : 's'}
                 </MetaChip>
                 <MetaChip>
                   {relationCount} relation{relationCount === 1 ? '' : 's'}
@@ -543,6 +711,97 @@ export default function ExplorePage() {
             ) : null}
           </form>
 
+          {jobId ? (
+            <div className="animate-fade-up rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-sm)] sm:p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold tracking-[0.14em] text-[var(--text-muted)] uppercase">
+                    Refine
+                  </p>
+                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                    Filters change the query · Fields change the table and CSV
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <RefineButton
+                    icon={<FilterIcon />}
+                    label="Filters"
+                    active={filterCount > 0}
+                    count={filterCount || undefined}
+                    onClick={openFilters}
+                  />
+                  <RefineButton
+                    icon={<ColumnsIcon />}
+                    label="Fields"
+                    active={fieldsCustom}
+                    detail={fieldsDetail}
+                    onClick={openFields}
+                  />
+                </div>
+              </div>
+
+              {filterCount > 0 || fieldsCustom ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+                  {filterIndexes.map((index) => {
+                    const f = filters[index]
+                    const label = filterChipLabel({
+                      field: f.field.trim(),
+                      operator: f.operator,
+                      value: String(f.value ?? ''),
+                    })
+                    return (
+                      <span
+                        key={`${index}-${label}`}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2 py-1 font-mono text-[11px] text-[var(--accent-ink)]"
+                      >
+                        <button
+                          type="button"
+                          className="min-w-0 truncate hover:underline"
+                          title="Edit filters"
+                          onClick={openFilters}
+                        >
+                          {label}
+                        </button>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded p-0.5 text-[var(--accent)] hover:bg-[var(--surface)]"
+                          aria-label={`Remove filter ${label}`}
+                          onClick={() => removeFilterAt(index)}
+                        >
+                          <CloseChipIcon />
+                        </button>
+                      </span>
+                    )
+                  })}
+                  {fieldsCustom ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 font-mono text-[11px] text-[var(--text-muted)]">
+                      <button
+                        type="button"
+                        className="hover:text-[var(--text)] hover:underline"
+                        onClick={openFields}
+                      >
+                        {visibleFieldCount} column{visibleFieldCount === 1 ? '' : 's'}
+                      </button>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded p-0.5 hover:bg-[var(--surface)] hover:text-[var(--text)]"
+                        aria-label="Show all fields"
+                        onClick={resetFields}
+                      >
+                        <CloseChipIcon />
+                      </button>
+                    </span>
+                  ) : null}
+                  {filterCount > 0 ? (
+                    <GhostButton type="button" className="ml-auto text-xs" onClick={clearFilters}>
+                      Clear filters
+                    </GhostButton>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {!jobId ? (
             <EmptyState
               title="Select a sync job"
@@ -551,7 +810,7 @@ export default function ExplorePage() {
           ) : !hasRun && !queryLoading ? (
             <EmptyState
               title="Ready to preview"
-              message={`Load ${side} rows for “${job?.name || 'this job'}” to inspect the mapped result set.`}
+              message={`Optionally set filters and fields above, then load ${side} rows for “${job?.name || 'this job'}”.`}
             />
           ) : null}
 
@@ -569,82 +828,145 @@ export default function ExplorePage() {
                 </h3>
                 <p className="mt-0.5 text-xs text-[var(--text-muted)]">
                   {total.toLocaleString()} row{total === 1 ? '' : 's'} from {side}
-                  {columns.length ? ` · ${columns.length} columns` : ''}
-                  {filterCount ? ` · ${filterCount} filter${filterCount === 1 ? '' : 's'}` : ''}
+                  {displayColumns.length
+                    ? ` · ${displayColumns.length} column${displayColumns.length === 1 ? '' : 's'}`
+                    : ''}
+                  {fieldsCustom && columns.length !== displayColumns.length
+                    ? ` of ${columns.length}`
+                    : ''}
                   {sortBy ? ` · sorted by ${sortBy} ${sortDir}` : ''}
                   {' · '}click a row for full values
                   {queryLoading ? ' · refreshing…' : ''}
                 </p>
               </div>
 
-              <TableShell
-                footer={
-                  <Pagination
-                    page={page}
-                    totalPages={totalPages}
-                    total={total}
-                    pageSize={pageSize}
-                    pageSizeOptions={PAGE_SIZE_OPTIONS}
-                    onPageChange={(next) => runQuery(next)}
-                    onPageSizeChange={changePageSize}
-                    disabled={queryLoading}
-                  />
-                }
-              >
-                <table
-                  className="table-fixed border-collapse text-left text-sm"
-                  style={{ width: Math.max(columns.length, 1) * 240 }}
+              {displayColumns.length === 0 ? (
+                <EmptyState
+                  title="No fields selected"
+                  message="Choose at least one column to show in the table and CSV."
+                  action={
+                    <SecondaryButton type="button" onClick={openFields}>
+                      Choose fields
+                    </SecondaryButton>
+                  }
+                />
+              ) : (
+                <TableShell
+                  footer={
+                    <Pagination
+                      page={page}
+                      totalPages={totalPages}
+                      total={total}
+                      pageSize={pageSize}
+                      pageSizeOptions={PAGE_SIZE_OPTIONS}
+                      onPageChange={(next) => runQuery(next)}
+                      onPageSizeChange={changePageSize}
+                      disabled={queryLoading}
+                    />
+                  }
                 >
-                  <colgroup>
-                    {columns.map((col) => (
-                      <col key={col} style={{ width: 240 }} />
-                    ))}
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      {columns.map((col) => {
-                        const active = sortBy === col
-                        return (
-                          <Th key={col} className="max-w-[240px]">
-                            <button
-                              type="button"
-                              className="block w-full truncate text-left uppercase hover:text-[var(--text)]"
-                              title={`Sort by ${col}`}
-                              onClick={() => toggleSort(col)}
-                              disabled={queryLoading}
-                            >
-                              {col}
-                              {active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
-                            </button>
-                          </Th>
-                        )
-                      })}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, idx) => (
-                      <tr
-                        key={row.id != null ? String(row.id) : idx}
-                        className="cursor-pointer transition-colors hover:bg-[var(--accent-soft)]/40"
-                        onClick={() => setSelectedRow(row)}
-                      >
-                        {columns.map((col) => {
-                          const text = cellDisplay(row[col])
+                  <table
+                    className="w-full table-fixed border-collapse text-left text-sm"
+                    style={{ minWidth: Math.max(displayColumns.length, 1) * 160 }}
+                  >
+                    <thead>
+                      <tr>
+                        {displayColumns.map((col) => {
+                          const active = sortBy === col
                           return (
-                            <Td key={col} className="max-w-[240px] overflow-hidden">
-                              <span className="block truncate font-mono text-xs" title={text}>
-                                {text}
-                              </span>
-                            </Td>
+                            <Th key={col}>
+                              <button
+                                type="button"
+                                className="block w-full truncate text-left uppercase hover:text-[var(--text)]"
+                                title={`Sort by ${col}`}
+                                onClick={() => toggleSort(col)}
+                                disabled={queryLoading}
+                              >
+                                {col}
+                                {active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                              </button>
+                            </Th>
                           )
                         })}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </TableShell>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, idx) => (
+                        <tr
+                          key={row.id != null ? String(row.id) : idx}
+                          className="cursor-pointer transition-colors hover:bg-[var(--accent-soft)]/40"
+                          onClick={() => setSelectedRow(row)}
+                        >
+                          {displayColumns.map((col) => {
+                            const text = cellDisplay(row[col])
+                            return (
+                              <Td key={col} className="overflow-hidden">
+                                <span className="block truncate font-mono text-xs" title={text}>
+                                  {text}
+                                </span>
+                              </Td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableShell>
+              )}
             </div>
           ) : null}
+
+          <Dialog
+            open={filtersOpen}
+            title="Filters"
+            description="Narrow the preview query. All filters are AND’d. Job rules still apply on source."
+            onClose={() => setFiltersOpen(false)}
+            size="lg"
+            footer={
+              <>
+                {hasRun ? (
+                  <SecondaryButton
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setFiltersOpen(false)
+                      runQuery(1)
+                    }}
+                  >
+                    Apply & preview
+                  </SecondaryButton>
+                ) : null}
+                <PrimaryButton type="button" onClick={() => setFiltersOpen(false)}>
+                  Done
+                </PrimaryButton>
+              </>
+            }
+          >
+            <ExploreFilters
+              filters={filters}
+              onChange={setFilters}
+              fieldOptions={filterFieldOptions}
+              onNeedFields={prefetchFilterFields}
+            />
+          </Dialog>
+
+          <Dialog
+            open={fieldsOpen}
+            title="Fields"
+            description="Choose columns for the results table and CSV download. Row detail still shows every value."
+            onClose={() => setFieldsOpen(false)}
+            footer={
+              <PrimaryButton type="button" onClick={() => setFieldsOpen(false)}>
+                Done
+              </PrimaryButton>
+            }
+          >
+            <ExploreFields
+              options={selectableFields}
+              selected={selectedFields}
+              onChange={setSelectedFields}
+            />
+          </Dialog>
 
           <RowDetailDialog
             row={selectedRow}

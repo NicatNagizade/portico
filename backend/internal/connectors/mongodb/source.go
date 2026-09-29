@@ -101,7 +101,11 @@ func (s *Source) schemaFromCollectionValidator(ctx context.Context, table string
 	if !ok {
 		return nil, nil
 	}
-	return SchemaFromValidator(validator), nil
+	schema := SchemaFromValidator(validator)
+	if schema != nil {
+		schema.Columns = docutil.NestDottedFields(schema.Columns)
+	}
+	return schema, nil
 }
 
 func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
@@ -168,7 +172,7 @@ func (s *Source) Query(ctx context.Context, table string, columns []string, filt
 
 	findOpts := options.Find().SetSkip(int64(offset)).SetLimit(int64(limit))
 	if order != nil && strings.TrimSpace(order.Column) != "" {
-		col := filterColumn(order.Column)
+		col := docutil.SortColumn(order.Column, SortableIDField)
 		dir := 1
 		if order.Desc {
 			dir = -1

@@ -84,19 +84,23 @@ func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSch
 	if err != nil {
 		return nil, fmt.Errorf("typesense retrieve collection %q: %w", table, err)
 	}
-	schema := &connectors.TableSchema{
-		Columns: []connectors.ColumnSchema{
-			{Name: "id", Type: connectors.FieldTypeString, PrimaryKey: true},
-		},
-	}
+	var flat []connectors.ColumnSchema
 	for _, f := range coll.Fields {
 		if f.Name == "" || f.Name == "id" || f.Name == SortableIDField {
 			continue
 		}
-		schema.Columns = append(schema.Columns, connectors.ColumnSchema{
+		flat = append(flat, connectors.ColumnSchema{
 			Name: f.Name,
 			Type: mapTypesenseType(f.Type),
 		})
+	}
+	// Typesense enable_nested_fields declares nested paths as top-level dotted
+	// names (posts.title). Fold those under the parent relation column.
+	schema := &connectors.TableSchema{
+		Columns: append(
+			[]connectors.ColumnSchema{{Name: "id", Type: connectors.FieldTypeString, PrimaryKey: true}},
+			docutil.NestDottedFields(flat)...,
+		),
 	}
 	// Collection schema often declares relations as opaque object/object[].
 	// Sample documents fill nested Columns when present.

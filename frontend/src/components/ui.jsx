@@ -195,7 +195,7 @@ export function Toggle({
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={ariaLabel || label}
+      aria-label={ariaLabel || (typeof label === 'string' ? label : undefined)}
       disabled={disabled}
       onClick={() => onChange?.(!checked)}
       className={[
@@ -217,17 +217,112 @@ export function Toggle({
           ].join(' ')}
         />
       </span>
-      {(label || description) && (
-        <span className="min-w-0 flex-1">
-          {label ? (
-            <span className="block text-sm font-medium text-[var(--text)]">{label}</span>
-          ) : null}
-          {description ? (
-            <span className="mt-0.5 block text-xs text-[var(--text-muted)]">{description}</span>
-          ) : null}
-        </span>
-      )}
+      <ControlCopy label={label} description={description} />
     </button>
+  )
+}
+
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+  className = '',
+  'aria-label': ariaLabel,
+}) {
+  const labelText = typeof label === 'string' ? label : undefined
+  return (
+    <label
+      className={[
+        'flex items-start gap-2.5',
+        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+        className,
+      ].join(' ')}
+    >
+      <input
+        type="checkbox"
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--border-strong)] text-[var(--accent)] accent-[var(--accent)]"
+        checked={checked}
+        disabled={disabled}
+        aria-label={ariaLabel || labelText}
+        onChange={(e) => onChange?.(e.target.checked)}
+      />
+      <ControlCopy label={label} description={description} />
+    </label>
+  )
+}
+
+function ControlCopy({ label, description }) {
+  if (!label && !description) return null
+  return (
+    <span className="min-w-0 flex-1">
+      {label ? (
+        typeof label === 'string' ? (
+          <span className="block text-sm font-medium text-[var(--text)]">{label}</span>
+        ) : (
+          label
+        )
+      ) : null}
+      {description ? (
+        <span className="mt-0.5 block text-xs text-[var(--text-muted)]">{description}</span>
+      ) : null}
+    </span>
+  )
+}
+
+/** Modal shell used by explore filters/fields and row detail. */
+export function Dialog({
+  open,
+  title,
+  description,
+  onClose,
+  children,
+  footer,
+  size = 'md',
+  'aria-label': ariaLabel,
+}) {
+  if (!open) return null
+
+  const maxWidth =
+    size === 'lg' ? 'max-w-2xl' : size === 'sm' ? 'max-w-md' : 'max-w-xl'
+
+  return (
+    <div
+      className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-[#12181f]/45 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel || title}
+        className={[
+          'animate-dialog-in flex max-h-[min(90vh,720px)] w-full flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lg)]',
+          maxWidth,
+        ].join(' ')}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+          <div className="min-w-0">
+            {title ? (
+              <h2 className="text-lg font-semibold tracking-tight text-[var(--text)]">{title}</h2>
+            ) : null}
+            {description ? (
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{description}</p>
+            ) : null}
+          </div>
+          <GhostButton type="button" onClick={onClose}>
+            Close
+          </GhostButton>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer ? (
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-3">
+            {footer}
+          </div>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -289,6 +384,10 @@ export function MetaChip({ children }) {
 
 export const inputClassName =
   'w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] shadow-[var(--shadow-sm)] outline-none transition-shadow placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-soft)]'
+
+/** Compact inputs for dense editor tables (fields, rules, filters, relations). */
+export const compactInputClassName =
+  'w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-soft)]'
 
 export const tableClassName = 'w-full min-w-[720px] border-collapse text-left text-sm'
 

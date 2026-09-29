@@ -37,6 +37,21 @@ type Filter struct {
 	Column   string
 	Operator string
 	Value    string
+	// Rel scopes this filter as column IN (SELECT … FROM related WHERE …)
+	// using sync-job relation keys (belongs_to / has_many / …). SQL sources only.
+	Rel *RelationSubquery `json:"-"`
+}
+
+// RelationSubquery is a GORM IN-subquery derived from an ORM-style relation.
+type RelationSubquery struct {
+	Table  string
+	Select string
+	Where  []Filter
+}
+
+// RelationFilterSupport is implemented by SQL sources that honor Filter.Rel.
+type RelationFilterSupport interface {
+	SupportsRelationFilters() bool
 }
 
 // Order is an optional sort for explore Query calls. Nil means unspecified order.

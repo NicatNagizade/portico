@@ -666,7 +666,7 @@
         },
         "/sync-jobs/{id}/explore/export": {
             "post": {
-                "description": "Downloads matching source or destination rows as CSV. Optional filters match the explore preview.",
+                "description": "Downloads matching source or destination rows as CSV. Optional filters match the explore preview. Optional fields limits CSV columns (omit for all).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1005,6 +1005,12 @@
         "handlers.ColumnInfo": {
             "type": "object",
             "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.ColumnInfo"
+                    }
+                },
                 "name": {
                     "type": "string"
                 },
@@ -1027,6 +1033,13 @@
                 "side"
             ],
             "properties": {
+                "fields": {
+                    "description": "omit = all columns; empty = none",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "filters": {
                     "type": "array",
                     "items": {
