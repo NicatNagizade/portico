@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import ConnectionsPage from './pages/ConnectionsPage'
+import ConnectionDetailPage from './pages/ConnectionDetailPage'
 import ConnectionFormPage from './pages/ConnectionFormPage'
 import ExplorePage from './pages/ExplorePage'
 import LandingPage from './pages/LandingPage'
@@ -18,6 +19,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="connections" element={<ConnectionsPage />} />
           <Route path="connections/new" element={<ConnectionFormPage />} />
+          <Route path="connections/:id" element={<ConnectionDetailPage />} />
           <Route path="connections/:id/edit" element={<ConnectionFormPage />} />
           <Route path="sync-jobs" element={<SyncJobsPage />} />
           <Route path="sync-jobs/new" element={<SyncJobFormPage />} />

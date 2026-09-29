@@ -12,17 +12,28 @@ import (
 
 // ListSyncJobs godoc
 // @Summary List sync jobs
-// @Description Returns a paginated list of sync jobs. Default page size is 20; maximum is 100.
+// @Description Returns a paginated list of sync jobs. Optionally filter by connection_id (matches source or destination). Default page size is 20; maximum is 100.
 // @Tags sync-jobs
 // @Produce json
+// @Param connection_id query int false "Filter by connection ID (source or destination)"
 // @Param page query int false "Page number (1-based)" default(1) minimum(1)
 // @Param page_size query int false "Items per page (max 100)" default(20) minimum(1) maximum(100)
 // @Success 200 {object} SyncJobListResponse
+// @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /sync-jobs [get]
 func (h *Handlers) ListSyncJobs(c *gin.Context) {
+	var connectionID *uint
+	if raw := c.Query("connection_id"); raw != "" {
+		id, err := parseID(raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid connection_id"})
+			return
+		}
+		connectionID = &id
+	}
 	p := pagination.Parse(c)
-	items, total, err := h.SyncJobs.List(p.Page, p.PageSize)
+	items, total, err := h.SyncJobs.List(connectionID, p.Page, p.PageSize)
 	if err != nil {
 		writeErr(c, err, nil)
 		return

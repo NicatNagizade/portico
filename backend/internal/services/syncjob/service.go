@@ -100,17 +100,21 @@ type UpdateInput struct {
 	Rules                   *[]RuleInput     `json:"rules"`
 }
 
-func (s *Service) List(page, pageSize int) ([]models.SyncJob, int64, error) {
+func (s *Service) List(connectionID *uint, page, pageSize int) ([]models.SyncJob, int64, error) {
+	q := s.db.Model(&models.SyncJob{})
+	if connectionID != nil {
+		q = q.Where("source_connection_id = ? OR destination_connection_id = ?", *connectionID, *connectionID)
+	}
 	var total int64
-	if err := s.db.Model(&models.SyncJob{}).Count(&total).Error; err != nil {
+	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var items []models.SyncJob
-	q := s.db.Preload("SourceConnection").Preload("DestinationConnection").
+	if err := q.Preload("SourceConnection").Preload("DestinationConnection").
 		Order("id asc").
 		Offset((page - 1) * pageSize).
-		Limit(pageSize)
-	if err := q.Find(&items).Error; err != nil {
+		Limit(pageSize).
+		Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
 	return items, total, nil

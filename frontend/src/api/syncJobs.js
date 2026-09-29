@@ -1,8 +1,10 @@
 import { download, request } from './client'
 import { buildQuery, normalizePage } from './pagination'
 
-export function listSyncJobs({ page = 1, pageSize = 20 } = {}) {
-  return request(`/sync-jobs${buildQuery({ page, page_size: pageSize })}`).then(normalizePage)
+export function listSyncJobs({ connectionId, page = 1, pageSize = 20 } = {}) {
+  return request(
+    `/sync-jobs${buildQuery({ connection_id: connectionId, page, page_size: pageSize })}`,
+  ).then(normalizePage)
 }
 
 export function getSyncJob(id) {

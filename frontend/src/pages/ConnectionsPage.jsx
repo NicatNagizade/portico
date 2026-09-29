@@ -5,17 +5,74 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import {
   EmptyState,
   ErrorBanner,
-  GhostButton,
+  IconButton,
+  iconButtonClass,
   ListRow,
   ListStack,
   LoadingState,
   MetaChip,
   PageHeader,
   PrimaryButton,
-  SecondaryButton,
   TypeChip,
 } from '../components/ui'
 import { formatDate } from '../lib/format'
+
+function Icon({ children }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      {children}
+    </svg>
+  )
+}
+
+function CreateIcon() {
+  return (
+    <Icon>
+      <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </Icon>
+  )
+}
+
+function OpenIcon() {
+  return (
+    <Icon>
+      <path
+        d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+      />
+      <circle cx="12" cy="12" r="2.75" stroke="currentColor" strokeWidth="1.75" />
+    </Icon>
+  )
+}
+
+function EditIcon() {
+  return (
+    <Icon>
+      <path
+        d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinejoin="round"
+      />
+      <path d="m13.5 6.5 3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </Icon>
+  )
+}
+
+function DeleteIcon() {
+  return (
+    <Icon>
+      <path
+        d="M4 7h16M9 7V5h6v2M6.5 7l.8 13h9.4l.8-13"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Icon>
+  )
+}
 
 export default function ConnectionsPage() {
   const [items, setItems] = useState([])
@@ -65,7 +122,7 @@ export default function ConnectionsPage() {
         actions={
           <Link to="/connections/new">
             <PrimaryButton>
-              <span aria-hidden="true">+</span> New connection
+              <CreateIcon /> New connection
             </PrimaryButton>
           </Link>
         }
@@ -81,7 +138,9 @@ export default function ConnectionsPage() {
           message="Create a connection, then use it as a source or destination in a sync job."
           action={
             <Link to="/connections/new">
-              <PrimaryButton>Create first connection</PrimaryButton>
+              <PrimaryButton>
+                <CreateIcon /> Create first connection
+              </PrimaryButton>
             </Link>
           }
         />
@@ -110,10 +169,31 @@ export default function ConnectionsPage() {
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                 <MetaChip>updated {formatDate(item.updated_at)}</MetaChip>
-                <Link to={`/connections/${item.id}/edit`}>
-                  <SecondaryButton>Edit</SecondaryButton>
-                </Link>
-                <GhostButton onClick={() => setPendingDelete(item)}>Delete</GhostButton>
+                <div className="inline-flex items-center gap-px rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-0.5">
+                  <Link
+                    to={`/connections/${item.id}`}
+                    title="View"
+                    aria-label={`View ${item.name}`}
+                    className={iconButtonClass()}
+                  >
+                    <OpenIcon />
+                  </Link>
+                  <Link
+                    to={`/connections/${item.id}/edit`}
+                    title="Edit"
+                    aria-label={`Edit ${item.name}`}
+                    className={iconButtonClass()}
+                  >
+                    <EditIcon />
+                  </Link>
+                  <IconButton
+                    label="Delete"
+                    tone="danger"
+                    onClick={() => setPendingDelete(item)}
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                </div>
               </div>
             </ListRow>
           ))}

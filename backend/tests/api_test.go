@@ -611,6 +611,49 @@ func TestSyncJobsAndLogs(t *testing.T) {
 		t.Fatalf("unexpected job page: %+v", jobPage)
 	}
 
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/sync-jobs?connection_id=%d&page=1&page_size=10", src.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list jobs by source connection: %d", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &jobPage); err != nil {
+		t.Fatal(err)
+	}
+	if jobPage.Total < 1 {
+		t.Fatalf("expected jobs for source connection %d, got total=%d", src.ID, jobPage.Total)
+	}
+	for _, item := range jobPage.Items {
+		if item.SourceConnectionID != src.ID && item.DestinationConnectionID != src.ID {
+			t.Fatalf("filtered job unrelated to connection %d: %+v", src.ID, item)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/sync-jobs?connection_id=%d&page=1&page_size=10", dst.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list jobs by destination connection: %d", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &jobPage); err != nil {
+		t.Fatal(err)
+	}
+	if jobPage.Total < 1 {
+		t.Fatalf("expected jobs for destination connection %d, got total=%d", dst.ID, jobPage.Total)
+	}
+	for _, item := range jobPage.Items {
+		if item.SourceConnectionID != dst.ID && item.DestinationConnectionID != dst.ID {
+			t.Fatalf("filtered job unrelated to connection %d: %+v", dst.ID, item)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/sync-jobs?connection_id=abc", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid connection_id: expected 400, got %d", w.Code)
+	}
+
 	// create a log row directly and fetch via API
 	now := time.Now()
 	rows := int64(10)

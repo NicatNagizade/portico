@@ -381,9 +381,7 @@
                         "description": "OK",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -391,7 +389,7 @@
         },
         "/sync-jobs": {
             "get": {
-                "description": "Returns a paginated list of sync jobs. Default page size is 20; maximum is 100.",
+                "description": "Returns a paginated list of sync jobs. Optionally filter by connection_id (matches source or destination). Default page size is 20; maximum is 100.",
                 "produces": [
                     "application/json"
                 ],
@@ -400,6 +398,12 @@
                 ],
                 "summary": "List sync jobs",
                 "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Filter by connection ID (source or destination)",
+                        "name": "connection_id",
+                        "in": "query"
+                    },
                     {
                         "minimum": 1,
                         "type": "integer",
@@ -423,6 +427,12 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/handlers.SyncJobListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     },
                     "500": {

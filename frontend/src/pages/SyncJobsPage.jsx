@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { listConnections } from '../api/connections'
 import { parsePage, parsePageSize } from '../api/pagination'
 import { deleteSyncJob, listSyncJobs, startSyncJob } from '../api/syncJobs'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -16,14 +17,16 @@ import {
   TableShell,
   Td,
   Th,
+  inputClassName,
   tableClassName,
 } from '../components/ui'
 import { formatDate } from '../lib/format'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50]
 
-function buildParams({ page, pageSize }) {
+function buildParams({ connectionId, page, pageSize }) {
   const next = {}
+  if (connectionId) next.connection_id = connectionId
   if (page > 1) next.page = String(page)
   if (pageSize !== 20) next.page_size = String(pageSize)
   return next
@@ -114,9 +117,11 @@ function DeleteIcon() {
 export default function SyncJobsPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const filterConnectionId = searchParams.get('connection_id') || ''
   const page = parsePage(searchParams.get('page'))
   const pageSize = parsePageSize(searchParams.get('page_size'), { options: PAGE_SIZE_OPTIONS })
   const [items, setItems] = useState([])
+  const [connections, setConnections] = useState([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -125,34 +130,51 @@ export default function SyncJobsPage() {
   const [deleting, setDeleting] = useState(false)
   const [runningId, setRunningId] = useState(null)
 
+  useEffect(() => {
+    listConnections()
+      .then((data) => setConnections(data || []))
+      .catch(() => setConnections([]))
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const data = await listSyncJobs({ page, pageSize })
+      const data = await listSyncJobs({
+        connectionId: filterConnectionId || undefined,
+        page,
+        pageSize,
+      })
       setItems(data?.items || [])
       setTotal(data?.total ?? 0)
       setTotalPages(data?.total_pages ?? 0)
       if (data?.total_pages > 0 && page > data.total_pages) {
-        setSearchParams(buildParams({ page: data.total_pages, pageSize }), { replace: true })
+        setSearchParams(
+          buildParams({ connectionId: filterConnectionId, page: data.total_pages, pageSize }),
+          { replace: true },
+        )
       }
     } catch (err) {
       setError(err.message || 'Failed to load sync jobs')
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, setSearchParams])
+  }, [filterConnectionId, page, pageSize, setSearchParams])
 
   useEffect(() => {
     load()
   }, [load])
 
+  function setConnectionFilter(connectionId) {
+    setSearchParams(buildParams({ connectionId, page: 1, pageSize }))
+  }
+
   function setPage(next) {
-    setSearchParams(buildParams({ page: next, pageSize }))
+    setSearchParams(buildParams({ connectionId: filterConnectionId, page: next, pageSize }))
   }
 
   function setPageSize(next) {
-    setSearchParams(buildParams({ page: 1, pageSize: next }))
+    setSearchParams(buildParams({ connectionId: filterConnectionId, page: 1, pageSize: next }))
   }
 
   async function handleRun(job) {
@@ -182,6 +204,8 @@ export default function SyncJobsPage() {
     }
   }
 
+  const filterConnection = connections.find((c) => String(c.id) === filterConnectionId)
+
   return (
     <div>
       <PageHeader
@@ -199,16 +223,40 @@ export default function SyncJobsPage() {
 
       <ErrorBanner message={error} />
 
+      <div className="mb-3 flex justify-end">
+        <div className="w-56">
+          <select
+            aria-label="Filter by connection"
+            className={inputClassName}
+            value={filterConnectionId}
+            onChange={(e) => setConnectionFilter(e.target.value)}
+          >
+            <option value="">All connections</option>
+            {connections.map((conn) => (
+              <option key={conn.id} value={String(conn.id)}>
+                {conn.name} (#{conn.id})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       {loading && items.length === 0 ? (
         <LoadingState />
       ) : !loading && items.length === 0 ? (
         <EmptyState
           title="No sync jobs yet"
-          message="Create a job after you have at least one source and one destination connection."
+          message={
+            filterConnectionId
+              ? `No jobs use ${filterConnection?.name || `connection #${filterConnectionId}`} as a source or destination.`
+              : 'Create a job after you have at least one source and one destination connection.'
+          }
           action={
-            <Link to="/sync-jobs/new">
-              <PrimaryButton>Create sync job</PrimaryButton>
-            </Link>
+            filterConnectionId ? null : (
+              <Link to="/sync-jobs/new">
+                <PrimaryButton>Create sync job</PrimaryButton>
+              </Link>
+            )
           }
         />
       ) : (
