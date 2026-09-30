@@ -119,6 +119,15 @@ export default function SyncLogDetailPage() {
           <MetaChip>{formatDuration(log.duration_ms)}</MetaChip>
           <MetaChip>started {formatDate(log.started_at)}</MetaChip>
         </div>
+        {log.message ? (
+          <p
+            className={`mb-4 text-sm leading-relaxed ${
+              log.status === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]'
+            }`}
+          >
+            {log.message}
+          </p>
+        ) : null}
         <SyncProgress log={log} />
       </div>
 

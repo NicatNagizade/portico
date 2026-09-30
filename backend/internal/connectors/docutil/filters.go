@@ -259,18 +259,31 @@ func CloneRows(rows []map[string]any) []map[string]any {
 }
 
 // SortRows sorts rows by order in place. Nil or empty column is a no-op.
+// Dotted columns (posts.body) use the first value at that path.
 func SortRows(rows []map[string]any, order *connectors.Order) {
 	if order == nil || strings.TrimSpace(order.Column) == "" {
 		return
 	}
 	col := strings.TrimSpace(order.Column)
+	parts := strings.Split(col, ".")
 	sort.SliceStable(rows, func(i, j int) bool {
-		cmp := compareValues(rows[i][col], rows[j][col])
+		cmp := compareValues(rowSortValue(rows[i], col, parts), rowSortValue(rows[j], col, parts))
 		if order.Desc {
 			return cmp > 0
 		}
 		return cmp < 0
 	})
+}
+
+func rowSortValue(row map[string]any, col string, parts []string) any {
+	if len(parts) > 1 {
+		vals := pathValues(row, parts)
+		if len(vals) == 0 {
+			return nil
+		}
+		return vals[0]
+	}
+	return row[col]
 }
 
 func compareValues(a, b any) int {

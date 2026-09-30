@@ -2,6 +2,7 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -155,5 +156,58 @@ func TestSQLiteRoundTrip(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("count=%d", n)
+	}
+}
+
+func TestSQLiteDestinationNestedJSONFilter(t *testing.T) {
+	path := t.TempDir() + "/nested.db"
+	raw, _ := json.Marshal(map[string]any{"path": path})
+	conn := &models.Connection{
+		Type:   models.ConnectionTypeSQLite,
+		Config: datatypes.JSON(raw),
+	}
+
+	dst, err := sqlite.NewDestination(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dst.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+
+	schema := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+			{Name: "name", Type: connectors.FieldTypeString},
+			{Name: "posts", Type: connectors.FieldTypeObjectArray},
+		},
+	}
+	if err := dst.Prepare(t.Context(), "users_test", schema, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := dst.WriteBatch(t.Context(), "users_test", []map[string]any{
+		{"id": 1, "name": "Ada", "posts": []map[string]any{{"body": "hello"}, {"body": "world"}}},
+		{"id": 2, "name": "Bob", "posts": []map[string]any{{"body": "other"}}},
+		{"id": 3, "name": "Cid", "posts": []map[string]any{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, ok := dst.(connectors.DestinationReader)
+	if !ok {
+		t.Fatal("sqlite destination should implement DestinationReader")
+	}
+	rows, total, err := reader.Query(t.Context(), "users_test", []connectors.Filter{
+		{Column: "posts.body", Operator: models.RuleOperatorEq, Value: "hello"},
+	}, 50, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("total=%d want 1", total)
+	}
+	if len(rows) != 1 || fmt.Sprint(rows[0]["name"]) != "Ada" {
+		t.Fatalf("rows=%v", rows)
 	}
 }

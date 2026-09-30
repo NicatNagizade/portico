@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/portico/backend/internal/connectors"
+	"github.com/portico/backend/internal/connectors/docutil"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -197,6 +198,75 @@ func QueryPage(
 	return out, nil
 }
 
+// QueryDestination returns a page and total for destination explore reads.
+// Root filters run in SQL. Dotted paths (e.g. posts.body) are for JSON/JSONB
+// relation columns on the destination table and are matched in memory after
+// decode — do not use this for source tables, where nested paths are real
+// relations pushed as SQL subqueries.
+func QueryDestination(
+	ctx context.Context,
+	db *gorm.DB,
+	filters []connectors.Filter,
+	quoteIdent, quoteTable func(string) string,
+	limit, offset int,
+	order *connectors.Order,
+) ([]map[string]any, int64, error) {
+	root, nested := splitNestedFilters(filters)
+	nestedOrder := order != nil && strings.Contains(strings.TrimSpace(order.Column), ".")
+
+	if len(nested) == 0 && !nestedOrder {
+		total, err := Count(ctx, db, root, quoteIdent, quoteTable)
+		if err != nil {
+			return nil, 0, err
+		}
+		rows, err := QueryPage(ctx, db, nil, root, quoteIdent, quoteTable, limit, offset, order)
+		if err != nil {
+			return nil, 0, err
+		}
+		return rows, total, nil
+	}
+
+	all, err := queryAll(ctx, db, root, quoteIdent, quoteTable)
+	if err != nil {
+		return nil, 0, err
+	}
+	matched := docutil.FilterRows(all, nested)
+	docutil.SortRows(matched, order)
+	return docutil.PageRows(matched, limit, offset), int64(len(matched)), nil
+}
+
+func splitNestedFilters(filters []connectors.Filter) (root, nested []connectors.Filter) {
+	for _, f := range filters {
+		if strings.Contains(f.Column, ".") {
+			nested = append(nested, f)
+		} else {
+			root = append(root, f)
+		}
+	}
+	return root, nested
+}
+
+func queryAll(
+	ctx context.Context,
+	db *gorm.DB,
+	filters []connectors.Filter,
+	quoteIdent, quoteTable func(string) string,
+) ([]map[string]any, error) {
+	q, err := ApplyFilters(db.WithContext(ctx), filters, quoteIdent, quoteTable)
+	if err != nil {
+		return nil, err
+	}
+	var out []map[string]any
+	if err := q.Find(&out).Error; err != nil {
+		return nil, err
+	}
+	normalizeMaps(out)
+	if out == nil {
+		out = []map[string]any{}
+	}
+	return out, nil
+}
+
 func normalizeMaps(rows []map[string]any) {
 	for _, row := range rows {
 		for k, v := range row {
@@ -210,17 +280,30 @@ func NormalizeValue(v any, dbType string) any {
 	if v == nil {
 		return nil
 	}
-	b, ok := v.([]byte)
-	if !ok {
+	upper := strings.ToUpper(dbType)
+	switch x := v.(type) {
+	case []byte:
+		s := string(x)
+		if strings.Contains(upper, "JSON") || looksLikeJSON(s) {
+			var decoded any
+			if err := json.Unmarshal(x, &decoded); err == nil {
+				return decoded
+			}
+		}
+		return s
+	case string:
+		if strings.Contains(upper, "JSON") || looksLikeJSON(x) {
+			var decoded any
+			if err := json.Unmarshal([]byte(x), &decoded); err == nil {
+				return decoded
+			}
+		}
+		return x
+	default:
 		return v
 	}
-	s := string(b)
-	upper := strings.ToUpper(dbType)
-	if strings.Contains(upper, "JSON") || (len(s) > 0 && (s[0] == '{' || s[0] == '[')) {
-		var decoded any
-		if err := json.Unmarshal(b, &decoded); err == nil {
-			return decoded
-		}
-	}
-	return s
+}
+
+func looksLikeJSON(s string) bool {
+	return len(s) > 0 && (s[0] == '{' || s[0] == '[')
 }

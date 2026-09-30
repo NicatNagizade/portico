@@ -181,14 +181,9 @@ func mustJSON(v any) any {
 }
 
 func (d *Destination) Query(ctx context.Context, name string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
-	table := d.db.Table(d.qualifiedTable(name))
-	total, err := sqlutil.Count(ctx, table, filters, quoteIdent, nil)
+	rows, total, err := sqlutil.QueryDestination(ctx, d.db.Table(d.qualifiedTable(name)), filters, quoteIdent, nil, limit, offset, order)
 	if err != nil {
-		return nil, 0, fmt.Errorf("postgres count %q: %w", name, err)
-	}
-	rows, err := sqlutil.QueryPage(ctx, table, nil, filters, quoteIdent, nil, limit, offset, order)
-	if err != nil {
-		return nil, 0, fmt.Errorf("postgres select %q: %w", name, err)
+		return nil, 0, fmt.Errorf("postgres query %q: %w", name, err)
 	}
 	return rows, total, nil
 }
