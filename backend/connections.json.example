@@ -1,13 +1,13 @@
 {
   "connections": [
     {
-      "name": "local-postgres",
+      "name": "local-test-db",
       "type": "postgres",
       "config": {
         "host": "localhost",
         "port": 5432,
-        "user": "postgres",
-        "password": "postgres",
+        "user": "user",
+        "password": "password",
         "database": "portico_example",
         "sslmode": "disable"
       }
@@ -38,71 +38,100 @@
       "name": "local-redis",
       "type": "redis",
       "config": {
-        "host": "127.0.0.1",
+        "host": "localhost",
         "port": 6379,
-        "password": "",
-        "db": 0
+        "password": "eYVX7EwVmmxKPCDmwMtyKVge8oLd2t81"
       }
     }
   ],
   "sync_jobs": [
     {
-      "name": "users-to-typesense",
-      "source_connection": "local-postgres",
-      "source_table": "users",
+      "name": "posts to typesense",
+      "source_connection": "local-test-db",
+      "source_table": "posts",
       "destination_connection": "local-typesense",
-      "destination_table": "users",
-      "chunk_size": 500,
-      "workers": 2,
+      "destination_table": "posts",
+      "chunk_size": 2000,
+      "workers": 4,
       "config": {
         "enable_nested_fields": true
       },
       "relations": [
         {
-          "name": "posts",
+          "name": "user",
+          "type": "belongs_to",
+          "table": "users"
+        },
+        {
+          "name": "comments",
           "type": "has_many",
-          "table": "posts",
-          "foreign_key": "user_id",
-          "related_key": "id",
-          "fields": [
-            {
-              "source_name": "title",
-              "destination_name": "title",
-              "destination_type": "string"
-            }
-          ],
+          "table": "comments",
           "relations": [
             {
-              "name": "comments",
+              "name": "reactions",
               "type": "has_many",
-              "table": "comments"
+              "table": "reactions"
             }
           ]
         }
-      ],
-      "fields": [
+      ]
+    },
+    {
+      "name": "posts to mongo db",
+      "source_connection": "local-test-db",
+      "source_table": "posts",
+      "destination_connection": "local-mongo",
+      "destination_table": "posts",
+      "chunk_size": 2000,
+      "workers": 4,
+      "config": {},
+      "relations": [
         {
-          "source_name": "id",
-          "destination_name": "id",
-          "destination_type": "int64"
+          "name": "user",
+          "type": "belongs_to",
+          "table": "users"
         },
         {
-          "source_name": "username",
-          "destination_name": "username",
-          "destination_type": "string"
-        },
-        {
-          "source_name": "status",
-          "destination_name": "status",
-          "destination_type": "string",
-          "values": [
-            { "source_value": "1", "destination_value": "success" },
-            { "source_value": "2", "destination_value": "failed" }
+          "name": "comments",
+          "type": "has_many",
+          "table": "comments",
+          "relations": [
+            {
+              "name": "reactions",
+              "type": "has_many",
+              "table": "reactions"
+            }
           ]
         }
-      ],
-      "rules": [
-        { "field": "id", "operator": "gt", "value": "0" }
+      ]
+    },
+    {
+      "name": "posts to redis",
+      "source_connection": "local-test-db",
+      "source_table": "posts",
+      "destination_connection": "local-redis",
+      "destination_table": "posts",
+      "chunk_size": 2000,
+      "workers": 4,
+      "config": {},
+      "relations": [
+        {
+          "name": "user",
+          "type": "belongs_to",
+          "table": "users"
+        },
+        {
+          "name": "comments",
+          "type": "has_many",
+          "table": "comments",
+          "relations": [
+            {
+              "name": "reactions",
+              "type": "has_many",
+              "table": "reactions"
+            }
+          ]
+        }
       ]
     }
   ]
