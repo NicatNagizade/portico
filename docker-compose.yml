@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    env_file: backend/.env
+    volumes:
+      - pgdata:/var/lib/postgresql
+    entrypoint:
+      - /bin/sh
+      - -c
+      - export POSTGRES_USER="$$DB_USER" POSTGRES_PASSWORD="$$DB_PASSWORD" POSTGRES_DB="$$DB_NAME" && exec docker-entrypoint.sh postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$DB_USER\" -d \"$$DB_NAME\""]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  api:
+    build:
+      context: .
+      target: api
+    env_file: backend/.env
+    environment:
+      DB_HOST: postgres
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo >/dev/tcp/127.0.0.1/8080'"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
