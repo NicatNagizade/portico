@@ -27,14 +27,9 @@ func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
 }
 
 func (s *Source) Open(ctx context.Context) error {
-	client := goredis.NewClient(&goredis.Options{
-		Addr:     s.cfg.Addr(),
-		Password: s.cfg.Password,
-		DB:       s.cfg.DB,
-	})
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return fmt.Errorf("redis ping: %w", err)
+	client, err := openClient(ctx, s.cfg)
+	if err != nil {
+		return err
 	}
 	s.client = client
 	return nil

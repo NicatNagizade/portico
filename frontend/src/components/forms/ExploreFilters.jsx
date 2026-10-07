@@ -1,23 +1,10 @@
 import { RULE_OPERATORS, ruleNeedsValue } from '../../lib/ruleOperators'
 import AutocompleteInput from '../AutocompleteInput'
+import { TrashIcon } from '../icons'
 import { IconButton, SecondaryButton, compactInputClassName } from '../ui'
 
 function emptyExploreFilter() {
   return { field: '', operator: 'eq', value: '' }
-}
-
-function TrashIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 7h16M9 7V5h6v2M8 7l1 12h6l1-12"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
 }
 
 function PlusIcon() {

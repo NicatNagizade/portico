@@ -181,6 +181,7 @@ make setup                    # backend + frontend deps / .env
 make api                      # Go API :8080
 make frontend                 # Vite :5173
 make import-connections       # upsert from backend/connections.json
+make run-sync ID=1            # run a sync job from the CLI
 make example-migrate && make example-seed
 make migrate-refresh          # DESTRUCTIVE: reset app DB schema
 make test                     # backend tests (needs CGO)

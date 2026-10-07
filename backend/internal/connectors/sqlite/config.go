@@ -31,5 +31,5 @@ func openDB(ctx context.Context, cfg Config) (*gorm.DB, error) {
 }
 
 func quoteIdent(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+	return sqlutil.QuoteIdent(name, `"`)
 }

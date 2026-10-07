@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { deleteSyncJob, getSyncJob, startSyncJob } from '../api/syncJobs'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { BackIcon, DeleteIcon, EditIcon, LogsIcon, PlayIcon, SpinnerIcon } from '../components/icons'
 import {
   ErrorBanner,
   IconButton,
@@ -55,89 +56,6 @@ function RelationListItem({ relation }) {
         </ul>
       ) : null}
     </li>
-  )
-}
-
-function Icon({ children }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      {children}
-    </svg>
-  )
-}
-
-function BackIcon() {
-  return (
-    <Icon>
-      <path
-        d="M15 6 9 12l6 6"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  )
-}
-
-function EditIcon() {
-  return (
-    <Icon>
-      <path
-        d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3Z"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinejoin="round"
-      />
-      <path d="m13.5 6.5 3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    </Icon>
-  )
-}
-
-function PlayIcon() {
-  return (
-    <Icon>
-      <path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor" />
-    </Icon>
-  )
-}
-
-function SpinnerIcon() {
-  return (
-    <svg
-      className="animate-spin"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="2" opacity="0.35" />
-      <path d="M12 4a8 8 0 0 1 8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function LogsIcon() {
-  return (
-    <Icon>
-      <path d="M5 4h14v16H5V4Z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
-      <path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    </Icon>
-  )
-}
-
-function DeleteIcon() {
-  return (
-    <Icon>
-      <path
-        d="M4 7h16M9 7V5h6v2M6.5 7l.8 13h9.4l.8-13"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
   )
 }
 

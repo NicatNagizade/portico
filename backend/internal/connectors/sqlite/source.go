@@ -49,12 +49,12 @@ func (s *Source) ListTables(ctx context.Context) ([]string, error) {
 
 func (s *Source) Schema(ctx context.Context, table string) (*connectors.TableSchema, error) {
 	type colRow struct {
-		CID       int    `gorm:"column:cid"`
-		Name      string `gorm:"column:name"`
-		Type      string `gorm:"column:type"`
-		NotNull   int    `gorm:"column:notnull"`
-		Default   any    `gorm:"column:dflt_value"`
-		PrimaryKey int   `gorm:"column:pk"`
+		CID        int    `gorm:"column:cid"`
+		Name       string `gorm:"column:name"`
+		Type       string `gorm:"column:type"`
+		NotNull    int    `gorm:"column:notnull"`
+		Default    any    `gorm:"column:dflt_value"`
+		PrimaryKey int    `gorm:"column:pk"`
 	}
 	var rows []colRow
 	q := fmt.Sprintf("PRAGMA table_info(%s)", quoteIdent(table))

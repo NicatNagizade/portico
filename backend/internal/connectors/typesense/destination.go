@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/connectors/docutil"
@@ -72,14 +71,11 @@ func NewDestination(conn *models.Connection) (connectors.DestinationWriter, erro
 }
 
 func (d *Destination) Open(ctx context.Context) error {
-	node := fmt.Sprintf("%s://%s:%d", d.cfg.Protocol, d.cfg.Host, d.cfg.Port)
-	d.client = typesense.NewClient(
-		typesense.WithNodes([]string{node}),
-		typesense.WithAPIKey(d.cfg.APIKey),
-	)
-	if _, err := d.client.Health(ctx, 5*time.Second); err != nil {
-		return fmt.Errorf("typesense health check: %w", err)
+	client, err := openClient(ctx, d.cfg)
+	if err != nil {
+		return err
 	}
+	d.client = client
 	return nil
 }
 

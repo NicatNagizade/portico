@@ -137,6 +137,18 @@ func (h *Handlers) DeleteSyncJob(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handlers) requireSyncJob(c *gin.Context) (uint, bool) {
+	id, ok := pathID(c)
+	if !ok {
+		return 0, false
+	}
+	if _, err := h.SyncJobs.Get(id); err != nil {
+		writeErr(c, err, syncjob.ErrNotFound)
+		return 0, false
+	}
+	return id, true
+}
+
 // RunSyncJob godoc
 // @Summary Run a sync job
 // @Description Runs the sync synchronously and returns the finished sync log.
@@ -148,12 +160,8 @@ func (h *Handlers) DeleteSyncJob(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse
 // @Router /sync-jobs/{id}/run [post]
 func (h *Handlers) RunSyncJob(c *gin.Context) {
-	id, ok := pathID(c)
+	id, ok := h.requireSyncJob(c)
 	if !ok {
-		return
-	}
-	if _, err := h.SyncJobs.Get(id); err != nil {
-		writeErr(c, err, syncjob.ErrNotFound)
 		return
 	}
 	logEntry, err := h.Sync.Run(c.Request.Context(), id)
@@ -179,12 +187,8 @@ func (h *Handlers) RunSyncJob(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse
 // @Router /sync-jobs/{id}/start [post]
 func (h *Handlers) StartSyncJob(c *gin.Context) {
-	id, ok := pathID(c)
+	id, ok := h.requireSyncJob(c)
 	if !ok {
-		return
-	}
-	if _, err := h.SyncJobs.Get(id); err != nil {
-		writeErr(c, err, syncjob.ErrNotFound)
 		return
 	}
 	logEntry, err := h.Sync.Start(id)
@@ -196,12 +200,12 @@ func (h *Handlers) StartSyncJob(c *gin.Context) {
 }
 
 type ExploreRequest struct {
-	Side     string              `json:"side" binding:"required" example:"source"`
-	Page     int                 `json:"page" example:"1"`
-	PageSize int                 `json:"page_size" example:"50"`
-	SortBy   string              `json:"sort_by" example:"id"`
-	SortDir  string              `json:"sort_dir" example:"asc"`
-	Filters  []sync.FilterInput  `json:"filters"`
+	Side     string             `json:"side" binding:"required" example:"source"`
+	Page     int                `json:"page" example:"1"`
+	PageSize int                `json:"page_size" example:"50"`
+	SortBy   string             `json:"sort_by" example:"id"`
+	SortDir  string             `json:"sort_dir" example:"asc"`
+	Filters  []sync.FilterInput `json:"filters"`
 }
 
 type ExploreExportRequest struct {

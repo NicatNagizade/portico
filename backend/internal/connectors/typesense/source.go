@@ -48,15 +48,24 @@ func ParseConfig(raw json.RawMessage) (Config, error) {
 	return cfg, nil
 }
 
-func (s *Source) Open(ctx context.Context) error {
-	node := fmt.Sprintf("%s://%s:%d", s.cfg.Protocol, s.cfg.Host, s.cfg.Port)
-	s.client = typesense.NewClient(
+func openClient(ctx context.Context, cfg Config) (*typesense.Client, error) {
+	node := fmt.Sprintf("%s://%s:%d", cfg.Protocol, cfg.Host, cfg.Port)
+	client := typesense.NewClient(
 		typesense.WithNodes([]string{node}),
-		typesense.WithAPIKey(s.cfg.APIKey),
+		typesense.WithAPIKey(cfg.APIKey),
 	)
-	if _, err := s.client.Health(ctx, 5*time.Second); err != nil {
-		return fmt.Errorf("typesense health check: %w", err)
+	if _, err := client.Health(ctx, 5*time.Second); err != nil {
+		return nil, fmt.Errorf("typesense health check: %w", err)
 	}
+	return client, nil
+}
+
+func (s *Source) Open(ctx context.Context) error {
+	client, err := openClient(ctx, s.cfg)
+	if err != nil {
+		return err
+	}
+	s.client = client
 	return nil
 }
 

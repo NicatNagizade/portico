@@ -24,14 +24,9 @@ func NewDestination(conn *models.Connection) (connectors.DestinationWriter, erro
 }
 
 func (d *Destination) Open(ctx context.Context) error {
-	client := goredis.NewClient(&goredis.Options{
-		Addr:     d.cfg.Addr(),
-		Password: d.cfg.Password,
-		DB:       d.cfg.DB,
-	})
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return fmt.Errorf("redis ping: %w", err)
+	client, err := openClient(ctx, d.cfg)
+	if err != nil {
+		return err
 	}
 	d.client = client
 	return nil

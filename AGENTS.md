@@ -7,6 +7,7 @@ Sync API + admin UI. Connections (MySQL / Postgres / SQLite / Typesense / MongoD
 | Path | Role |
 |------|------|
 | `backend/` | Go API — Gin + GORM |
+| `backend/cmd/` | CLI entrypoints (`api`, `migrate`, `import-connections`, `run-sync`) |
 | `backend/internal/handlers/` | HTTP handlers split by concern (`handlers.go`, `connections.go`, `sync_jobs.go`, `sync_logs.go`) |
 | `backend/internal/connectors/` | Source/destination connectors; shared SQL in `sqlutil/` |
 | `frontend/` | React admin UI — Vite + Tailwind |
@@ -26,6 +27,7 @@ make swagger                            # regenerate backend/docs/swagger.json o
 make lint                               # frontend oxlint
 make migrate-refresh                    # DESTRUCTIVE: drop all app tables + AutoMigrate
 make import-connections                 # upsert from backend/connections.json (see .example)
+make run-sync ID=1                      # run a sync job from the CLI (no API)
 make example-migrate && make example-seed
 ```
 

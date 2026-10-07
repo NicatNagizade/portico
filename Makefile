@@ -1,6 +1,6 @@
 .PHONY: help setup setup-backend setup-frontend \
 	api frontend test test-frontend build tidy swagger lint preview \
-	migrate-refresh import-connections example-migrate example-migrate-truncate example-seed
+	migrate-refresh import-connections run-sync example-migrate example-migrate-truncate example-seed
 
 BACKEND := backend
 FRONTEND := frontend
@@ -52,6 +52,10 @@ migrate-refresh: ## DESTRUCTIVE: drop all app tables and re-run AutoMigrate
 
 import-connections: ## Upsert connections + sync jobs from backend/connections.json
 	cd $(BACKEND) && go run ./cmd/import-connections
+
+run-sync: ## Run a sync job by ID (make run-sync ID=1)
+	@test -n "$(ID)" || (echo "usage: make run-sync ID=<sync-job-id>" && exit 2)
+	cd $(BACKEND) && go run ./cmd/run-sync $(ID)
 
 example-migrate: ## Create example DB + tables (Postgres/MySQL via DB_DATABASE)
 	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env

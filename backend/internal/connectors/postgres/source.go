@@ -142,5 +142,5 @@ func mapPostgresType(dataType string) connectors.FieldType {
 }
 
 func quoteIdent(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+	return sqlutil.QuoteIdent(name, `"`)
 }

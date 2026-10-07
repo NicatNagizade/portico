@@ -164,16 +164,7 @@ func (o *Orchestrator) Stop(logID uint) (*models.SyncLog, error) {
 
 func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started time.Time) (rowsTotal, rowsSynced int64, err error) {
 	var job models.SyncJob
-	if err := o.db.
-		Preload("SourceConnection").
-		Preload("DestinationConnection").
-		Preload("Relations").
-		Preload("Relations.Fields").
-		Preload("Relations.Fields.Values").
-		Preload("Fields", "sync_job_relation_id IS NULL").
-		Preload("Fields.Values").
-		Preload("Rules").
-		First(&job, jobID).Error; err != nil {
+	if err := models.PreloadSyncJob(o.db).First(&job, jobID).Error; err != nil {
 		return 0, 0, fmt.Errorf("load sync job: %w", err)
 	}
 	if job.SourceConnection == nil || job.DestinationConnection == nil {

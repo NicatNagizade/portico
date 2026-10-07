@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { RELATION_TYPES } from '../../lib/relationTypes'
 import { columnNames, fieldsFromSourceColumns } from '../../lib/sourceColumns'
 import AutocompleteInput from '../AutocompleteInput'
+import { TrashIcon } from '../icons'
 import { Checkbox, GhostButton, IconButton, MetaChip, SecondaryButton, compactInputClassName } from '../ui'
 import FieldEditor from './FieldEditor'
 
@@ -26,20 +27,6 @@ function emptyRelation() {
     fields: [],
     relations: [],
   }
-}
-
-function TrashIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 7h16M9 7V5h6v2M8 7l1 12h6l1-12"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
 }
 
 function ChevronIcon({ open }) {

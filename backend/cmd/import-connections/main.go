@@ -6,23 +6,15 @@ import (
 	"os"
 
 	"github.com/portico/backend/internal/bootstrap"
-	"github.com/portico/backend/internal/config"
 	"github.com/portico/backend/internal/db"
-	"github.com/portico/backend/internal/secretbox"
 	"github.com/portico/backend/internal/services/connection"
 	"github.com/portico/backend/internal/services/syncjob"
 )
 
 func main() {
-	cfg, err := config.Load()
+	gdb, _, err := db.OpenFromEnv()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
-	}
-	secretbox.SetKey(os.Getenv("APP_KEY"))
-
-	gdb, err := db.Open(cfg)
-	if err != nil {
-		log.Fatalf("connect db: %v", err)
+		log.Fatalf("%v", err)
 	}
 
 	path := os.Getenv("CONNECTIONS_FILE")

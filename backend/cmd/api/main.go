@@ -2,9 +2,7 @@ package main
 
 import (
 	"log"
-	"os"
 
-	"github.com/portico/backend/internal/config"
 	"github.com/portico/backend/internal/connectors/register"
 	"github.com/portico/backend/internal/db"
 	"github.com/portico/backend/internal/handlers"
@@ -22,19 +20,12 @@ import (
 // @description API for managing database connections and syncing data to destinations like Typesense. List endpoints for sync jobs and sync logs return a paginated envelope: items, page, page_size, total, total_pages.
 // @BasePath /
 func main() {
-	cfg, err := config.Load()
+	gdb, cfg, err := db.OpenFromEnv()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		log.Fatalf("%v", err)
 	}
-	// APP_KEY stays in process memory. It is never written to the database.
-	secretbox.SetKey(os.Getenv("APP_KEY"))
 	if secretbox.UsingDevKey() {
 		log.Printf("warning: APP_KEY is unset; connection secrets use the development key")
-	}
-
-	gdb, err := db.Open(cfg)
-	if err != nil {
-		log.Fatalf("connect db: %v", err)
 	}
 
 	registry := register.DefaultRegistry()

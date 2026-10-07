@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { deleteConnection, getConnection } from '../api/connections'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { BackIcon, DeleteIcon, EditIcon, Icon } from '../components/icons'
 import {
   ErrorBanner,
   IconButton,
@@ -15,42 +16,6 @@ import {
 import { getConfigFields, parseConfig } from '../lib/connectionTypes'
 import { formatDate } from '../lib/format'
 
-function Icon({ children }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      {children}
-    </svg>
-  )
-}
-
-function BackIcon() {
-  return (
-    <Icon>
-      <path
-        d="M15 6 9 12l6 6"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  )
-}
-
-function EditIcon() {
-  return (
-    <Icon>
-      <path
-        d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3Z"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinejoin="round"
-      />
-      <path d="m13.5 6.5 3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    </Icon>
-  )
-}
-
 function JobsIcon() {
   return (
     <Icon>
@@ -58,20 +23,6 @@ function JobsIcon() {
         d="M5 7h14v4H5V7Zm0 6h14v4H5v-4Z"
         stroke="currentColor"
         strokeWidth="1.75"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  )
-}
-
-function DeleteIcon() {
-  return (
-    <Icon>
-      <path
-        d="M4 7h16M9 7V5h6v2M6.5 7l.8 13h9.4l.8-13"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
         strokeLinejoin="round"
       />
     </Icon>

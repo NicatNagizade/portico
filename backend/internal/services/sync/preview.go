@@ -93,16 +93,7 @@ func primaryKeyName(schema *connectors.TableSchema) string {
 
 func (o *Orchestrator) loadJob(jobID uint) (*models.SyncJob, error) {
 	var job models.SyncJob
-	err := o.db.
-		Preload("SourceConnection").
-		Preload("DestinationConnection").
-		Preload("Relations").
-		Preload("Relations.Fields").
-		Preload("Relations.Fields.Values").
-		Preload("Fields", "sync_job_relation_id IS NULL").
-		Preload("Fields.Values").
-		Preload("Rules").
-		First(&job, jobID).Error
+	err := models.PreloadSyncJob(o.db).First(&job, jobID).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound

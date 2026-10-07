@@ -122,16 +122,7 @@ func (s *Service) List(connectionID *uint, page, pageSize int) ([]models.SyncJob
 
 func (s *Service) Get(id uint) (*models.SyncJob, error) {
 	var item models.SyncJob
-	err := s.db.
-		Preload("SourceConnection").
-		Preload("DestinationConnection").
-		Preload("Relations").
-		Preload("Relations.Fields").
-		Preload("Relations.Fields.Values").
-		Preload("Fields", "sync_job_relation_id IS NULL").
-		Preload("Fields.Values").
-		Preload("Rules").
-		First(&item, id).Error
+	err := models.PreloadSyncJob(s.db).First(&item, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound

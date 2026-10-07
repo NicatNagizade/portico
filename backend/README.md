@@ -12,7 +12,16 @@ go run ./cmd/api
 
 Listens on `HTTP_ADDR` (default `:8080`). On startup, creates `DB_NAME` if missing and auto-migrates.
 
-From the repo root: `make api`, `make migrate-refresh`, `make import-connections`, `make swagger`, `make test`.
+From the repo root: `make api`, `make migrate-refresh`, `make import-connections`, `make run-sync ID=1`, `make swagger`, `make test`.
+
+### Run a sync job
+
+```bash
+make run-sync ID=1
+# or: go run ./cmd/run-sync 1
+```
+
+Runs the job in this process (same path as `POST /sync-jobs/{id}/run`) and prints the finished sync log. Ctrl+C stops it. Exit code is non-zero when the sync fails.
 
 ### Import connections (+ sync jobs)
 

@@ -9,11 +9,11 @@ import (
 const TablesCatalogKey = "__portico:tables"
 
 type Config struct {
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	Password      string `json:"password"`
-	DB            int    `json:"db"`
-	KeySeparator  string `json:"key_separator"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	Password     string `json:"password"`
+	DB           int    `json:"db"`
+	KeySeparator string `json:"key_separator"`
 }
 
 func ParseConfig(raw json.RawMessage) (Config, error) {
