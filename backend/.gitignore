@@ -3,4 +3,5 @@ connections.json
 *.exe
 *.test
 bin/
+api
 coverage.out
