@@ -2,17 +2,18 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { deleteConnection, listConnections } from '../api/connections'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { CreateIcon, DeleteIcon, EditIcon, OpenIcon } from '../components/icons'
 import {
   EmptyState,
   ErrorBanner,
-  GhostButton,
+  IconButton,
+  iconButtonClass,
   ListRow,
   ListStack,
   LoadingState,
   MetaChip,
   PageHeader,
   PrimaryButton,
-  SecondaryButton,
   TypeChip,
 } from '../components/ui'
 import { formatDate } from '../lib/format'
@@ -61,11 +62,11 @@ export default function ConnectionsPage() {
       <PageHeader
         eyebrow="Data plane"
         title="Connections"
-        description="Wire up MySQL or Postgres sources and Typesense destinations Portico will sync between."
+        description="Connect MySQL, Postgres, SQLite, Typesense, MongoDB, or Redis. Every connection can be used as a source or a destination."
         actions={
           <Link to="/connections/new">
             <PrimaryButton>
-              <span aria-hidden="true">+</span> New connection
+              <CreateIcon /> New connection
             </PrimaryButton>
           </Link>
         }
@@ -78,10 +79,12 @@ export default function ConnectionsPage() {
       ) : items.length === 0 ? (
         <EmptyState
           title="No connections yet"
-          message="Create a source (MySQL/Postgres) and a destination (Typesense) to start syncing tables."
+          message="Create a connection, then use it as a source or destination in a sync job."
           action={
             <Link to="/connections/new">
-              <PrimaryButton>Create first connection</PrimaryButton>
+              <PrimaryButton>
+                <CreateIcon /> Create first connection
+              </PrimaryButton>
             </Link>
           }
         />
@@ -110,10 +113,31 @@ export default function ConnectionsPage() {
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                 <MetaChip>updated {formatDate(item.updated_at)}</MetaChip>
-                <Link to={`/connections/${item.id}/edit`}>
-                  <SecondaryButton>Edit</SecondaryButton>
-                </Link>
-                <GhostButton onClick={() => setPendingDelete(item)}>Delete</GhostButton>
+                <div className="inline-flex items-center gap-px rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-0.5">
+                  <Link
+                    to={`/connections/${item.id}`}
+                    title="View"
+                    aria-label={`View ${item.name}`}
+                    className={iconButtonClass()}
+                  >
+                    <OpenIcon />
+                  </Link>
+                  <Link
+                    to={`/connections/${item.id}/edit`}
+                    title="Edit"
+                    aria-label={`Edit ${item.name}`}
+                    className={iconButtonClass()}
+                  >
+                    <EditIcon />
+                  </Link>
+                  <IconButton
+                    label="Delete"
+                    tone="danger"
+                    onClick={() => setPendingDelete(item)}
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                </div>
               </div>
             </ListRow>
           ))}

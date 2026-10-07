@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/db"
 	"github.com/portico/backend/internal/handlers"
+	"github.com/portico/backend/internal/llm"
 	"github.com/portico/backend/internal/models"
 	"github.com/portico/backend/internal/router"
 	"github.com/portico/backend/internal/secretbox"
@@ -47,6 +50,20 @@ func setupRouter(t *testing.T, gdb *gorm.DB, registry *connectors.Registry) *gin
 		synclog.NewService(gdb),
 		syncsvc.NewOrchestrator(gdb, registry),
 		registry,
+		nil,
+	)
+	return router.New(h)
+}
+
+func setupRouterWithLLM(t *testing.T, gdb *gorm.DB, registry *connectors.Registry, completer llm.Completer) *gin.Engine {
+	t.Helper()
+	h := handlers.New(
+		connection.NewService(gdb),
+		syncjob.NewService(gdb),
+		synclog.NewService(gdb),
+		syncsvc.NewOrchestrator(gdb, registry),
+		registry,
+		completer,
 	)
 	return router.New(h)
 }
@@ -70,6 +87,27 @@ func TestHealth(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("status=%v", body["status"])
+	}
+	if body["ai_enabled"] != false {
+		t.Fatalf("expected ai_enabled=false without LLM, got %v", body["ai_enabled"])
+	}
+
+	rAI := setupRouterWithLLM(t, gdb, connectors.NewRegistry(), &stubCompleter{})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	rAI.ServeHTTP(w, req)
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["ai_enabled"] != true {
+		t.Fatalf("expected ai_enabled=true with LLM, got %v", body["ai_enabled"])
 	}
 }
 
@@ -368,8 +406,7 @@ func TestSyncJobsAndLogs(t *testing.T) {
 		"chunk_size":                100,
 		"workers":                   2,
 		"config": map[string]any{
-			"default_sorting_field": "id",
-			"enable_nested_fields":  true,
+			"enable_nested_fields": true,
 		},
 		"relations": []map[string]any{
 			{
@@ -401,6 +438,14 @@ func TestSyncJobsAndLogs(t *testing.T) {
 				"source_name":      "internal_notes",
 				"destination_name": "notes",
 				"active":           false,
+			},
+			{
+				"source_name":      "status",
+				"destination_type": "string",
+				"values": []map[string]any{
+					{"source_value": "1", "destination_value": "success"},
+					{"source_value": "2", "destination_value": "failed"},
+				},
 			},
 		},
 		"rules": []map[string]any{
@@ -439,8 +484,8 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if job.Relations[1].Name != "skills" || job.Relations[1].IsActive() {
 		t.Fatalf("expected inactive skills relation, got %+v", job.Relations[1])
 	}
-	if len(job.Fields) != 3 {
-		t.Fatalf("expected 3 fields, got %+v", job.Fields)
+	if len(job.Fields) != 4 {
+		t.Fatalf("expected 4 fields, got %+v", job.Fields)
 	}
 	if job.Fields[0].SourceName != "full_name" || job.Fields[0].DestinationName != "name" || !job.Fields[0].IsActive() {
 		t.Fatalf("unexpected first field: %+v", job.Fields[0])
@@ -450,6 +495,15 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 	if job.Fields[2].SourceName != "internal_notes" || job.Fields[2].IsActive() {
 		t.Fatalf("expected active=false field preserved, got %+v", job.Fields[2])
+	}
+	if job.Fields[3].SourceName != "status" || len(job.Fields[3].Values) != 2 {
+		t.Fatalf("expected status field with 2 value maps, got %+v", job.Fields[3])
+	}
+	if job.Fields[3].Values[0].SourceValue != "1" || job.Fields[3].Values[0].DestinationValue != "success" {
+		t.Fatalf("unexpected first value map: %+v", job.Fields[3].Values[0])
+	}
+	if job.Fields[3].Values[1].SourceValue != "2" || job.Fields[3].Values[1].DestinationValue != "failed" {
+		t.Fatalf("unexpected second value map: %+v", job.Fields[3].Values[1])
 	}
 	if len(job.Rules) != 2 {
 		t.Fatalf("expected 2 rules, got %+v", job.Rules)
@@ -464,8 +518,8 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if err := json.Unmarshal(job.Config, &jobCfg); err != nil {
 		t.Fatalf("decode job config: %v", err)
 	}
-	if jobCfg["default_sorting_field"] != "id" {
-		t.Fatalf("expected default_sorting_field=id, got %+v", jobCfg)
+	if jobCfg["enable_nested_fields"] != true {
+		t.Fatalf("expected enable_nested_fields=true, got %+v", jobCfg)
 	}
 
 	w = httptest.NewRecorder()
@@ -480,8 +534,11 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	if len(job.Relations) != 2 {
 		t.Fatalf("expected preloaded relations, got %+v", job.Relations)
 	}
-	if len(job.Fields) != 3 {
+	if len(job.Fields) != 4 {
 		t.Fatalf("expected preloaded fields, got %+v", job.Fields)
+	}
+	if len(job.Fields[3].Values) != 2 {
+		t.Fatalf("expected preloaded field values, got %+v", job.Fields[3].Values)
 	}
 	if len(job.Rules) != 2 {
 		t.Fatalf("expected preloaded rules, got %+v", job.Rules)
@@ -554,6 +611,49 @@ func TestSyncJobsAndLogs(t *testing.T) {
 		t.Fatalf("unexpected job page: %+v", jobPage)
 	}
 
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/sync-jobs?connection_id=%d&page=1&page_size=10", src.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list jobs by source connection: %d", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &jobPage); err != nil {
+		t.Fatal(err)
+	}
+	if jobPage.Total < 1 {
+		t.Fatalf("expected jobs for source connection %d, got total=%d", src.ID, jobPage.Total)
+	}
+	for _, item := range jobPage.Items {
+		if item.SourceConnectionID != src.ID && item.DestinationConnectionID != src.ID {
+			t.Fatalf("filtered job unrelated to connection %d: %+v", src.ID, item)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/sync-jobs?connection_id=%d&page=1&page_size=10", dst.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list jobs by destination connection: %d", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &jobPage); err != nil {
+		t.Fatal(err)
+	}
+	if jobPage.Total < 1 {
+		t.Fatalf("expected jobs for destination connection %d, got total=%d", dst.ID, jobPage.Total)
+	}
+	for _, item := range jobPage.Items {
+		if item.SourceConnectionID != dst.ID && item.DestinationConnectionID != dst.ID {
+			t.Fatalf("filtered job unrelated to connection %d: %+v", dst.ID, item)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/sync-jobs?connection_id=abc", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid connection_id: expected 400, got %d", w.Code)
+	}
+
 	// create a log row directly and fetch via API
 	now := time.Now()
 	rows := int64(10)
@@ -618,6 +718,122 @@ func TestSyncJobsAndLogs(t *testing.T) {
 	}
 }
 
+func TestNestedRelationTreeCRUD(t *testing.T) {
+	gdb := setupTestDB(t)
+	r := setupRouter(t, gdb, connectors.NewRegistry())
+
+	src := models.Connection{
+		Name:   "src-nested",
+		Type:   models.ConnectionTypePostgres,
+		Config: datatypes.JSON([]byte(`{"host":"localhost","port":5432,"user":"u","password":"p","database":"db","sslmode":"disable"}`)),
+	}
+	dst := models.Connection{
+		Name:   "dst-nested",
+		Type:   models.ConnectionTypeTypesense,
+		Config: datatypes.JSON([]byte(`{"host":"localhost","port":8108,"api_key":"xyz"}`)),
+	}
+	if err := gdb.Create(&src).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dst).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{
+		"name":                      "users-nested-tree",
+		"source_connection_id":      src.ID,
+		"source_table":              "users",
+		"destination_connection_id": dst.ID,
+		"destination_table":         "users",
+		"relations": []map[string]any{
+			{
+				"name":  "posts",
+				"type":  "has_many",
+				"table": "posts",
+				"fields": []map[string]any{
+					{"source_name": "title", "destination_name": "title", "destination_type": "string"},
+				},
+				"relations": []map[string]any{
+					{
+						"name":  "comments",
+						"type":  "has_many",
+						"table": "comments",
+						"relations": []map[string]any{
+							{"name": "reactions", "type": "has_many", "table": "reactions"},
+						},
+					},
+				},
+			},
+		},
+	}
+	payload, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/sync-jobs", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var job models.SyncJob
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	if len(job.Relations) != 1 || job.Relations[0].Name != "posts" {
+		t.Fatalf("root relations: %+v", job.Relations)
+	}
+	posts := job.Relations[0]
+	if len(posts.Fields) != 1 || posts.Fields[0].SourceName != "title" {
+		t.Fatalf("posts fields: %+v", posts.Fields)
+	}
+	if len(posts.Relations) != 1 || posts.Relations[0].Name != "comments" {
+		t.Fatalf("comments under posts: %+v", posts.Relations)
+	}
+	comments := posts.Relations[0]
+	if len(comments.Relations) != 1 || comments.Relations[0].Name != "reactions" {
+		t.Fatalf("reactions under comments: %+v", comments.Relations)
+	}
+
+	// parent_id is internal — must not appear in API JSON
+	var raw map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	rels, _ := raw["relations"].([]any)
+	if len(rels) != 1 {
+		t.Fatalf("raw relations: %+v", raw["relations"])
+	}
+	root, _ := rels[0].(map[string]any)
+	if _, hasParent := root["parent_id"]; hasParent {
+		t.Fatalf("parent_id should be omitted from API JSON: %+v", root)
+	}
+	if _, hasParent := root["parent"]; hasParent {
+		t.Fatalf("parent should be omitted from API JSON: %+v", root)
+	}
+
+	// DB still stores parent_id flat
+	var flat []models.SyncJobRelation
+	if err := gdb.Where("sync_job_id = ?", job.ID).Find(&flat).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(flat) != 3 {
+		t.Fatalf("expected 3 flat rows, got %d", len(flat))
+	}
+	byName := map[string]models.SyncJobRelation{}
+	for _, rel := range flat {
+		byName[rel.Name] = rel
+	}
+	if byName["posts"].ParentID != nil {
+		t.Fatalf("posts should be root, got parent_id=%v", byName["posts"].ParentID)
+	}
+	if byName["comments"].ParentID == nil || *byName["comments"].ParentID != byName["posts"].ID {
+		t.Fatalf("comments parent: %+v", byName["comments"])
+	}
+	if byName["reactions"].ParentID == nil || *byName["reactions"].ParentID != byName["comments"].ID {
+		t.Fatalf("reactions parent: %+v", byName["reactions"])
+	}
+}
+
 type mockSource struct {
 	schema    *connectors.TableSchema
 	rows      []map[string]any
@@ -652,6 +868,61 @@ func (m *failingSource) QueryRows(ctx context.Context, table string, columns []s
 	return nil, m.err
 }
 
+func (m *mockSource) rowsFor(table string) []map[string]any {
+	if m.tableRows != nil {
+		if rows, ok := m.tableRows[table]; ok {
+			return rows
+		}
+	}
+	return m.rows
+}
+
+func (m *mockSource) SupportsRelationFilters() bool { return true }
+
+func (m *mockSource) matchRow(table string, row map[string]any, filters []connectors.Filter) bool {
+	for _, f := range filters {
+		if f.Rel != nil {
+			want := fmt.Sprint(row[f.Column])
+			found := false
+			for _, v := range m.subqueryValues(f.Rel) {
+				if fmt.Sprint(v) == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+			continue
+		}
+		if !matchFilters(row, []connectors.Filter{f}) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *mockSource) subqueryValues(rel *connectors.RelationSubquery) []any {
+	var out []any
+	seen := map[string]struct{}{}
+	for _, row := range m.rowsFor(rel.Table) {
+		if !m.matchRow(rel.Table, row, rel.Where) {
+			continue
+		}
+		v, ok := row[rel.Select]
+		if !ok || v == nil {
+			continue
+		}
+		key := fmt.Sprint(v)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
 func (m *mockSource) Open(ctx context.Context) error { return nil }
 func (m *mockSource) Close() error                   { return nil }
 func (m *mockSource) ListTables(ctx context.Context) ([]string, error) {
@@ -678,8 +949,8 @@ func (m *mockSource) Schema(ctx context.Context, table string) (*connectors.Tabl
 }
 func (m *mockSource) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
 	n := int64(0)
-	for _, row := range m.rows {
-		if matchFilters(row, filters) {
+	for _, row := range m.rowsFor(table) {
+		if m.matchRow(table, row, filters) {
 			n++
 		}
 	}
@@ -695,8 +966,8 @@ func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int
 		}
 	}
 	var filtered []map[string]any
-	for _, row := range m.rows {
-		if matchFilters(row, filters) {
+	for _, row := range m.rowsFor(table) {
+		if m.matchRow(table, row, filters) {
 			filtered = append(filtered, row)
 		}
 	}
@@ -713,8 +984,8 @@ func (m *mockSource) ReadChunks(ctx context.Context, table string, chunkSize int
 }
 func (m *mockSource) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
 	var filtered []map[string]any
-	for _, row := range m.rows {
-		if matchFilters(row, filters) {
+	for _, row := range m.rowsFor(table) {
+		if m.matchRow(table, row, filters) {
 			copied := make(map[string]any, len(row))
 			if len(columns) == 0 {
 				for k, val := range row {
@@ -819,7 +1090,7 @@ func (m *mockDest) WriteBatch(ctx context.Context, name string, docs []map[strin
 	}
 	return nil
 }
-func (m *mockDest) Query(ctx context.Context, name string, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
+func (m *mockDest) Query(ctx context.Context, name string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	docs := m.docs
@@ -830,11 +1101,21 @@ func (m *mockDest) Query(ctx context.Context, name string, limit, offset int, or
 		}
 		docs = flat
 	}
-	total := int64(len(docs))
-	ordered := docs
+	var filtered []map[string]any
+	for _, row := range docs {
+		if matchFilters(row, filters) {
+			copied := make(map[string]any, len(row))
+			for k, v := range row {
+				copied[k] = v
+			}
+			filtered = append(filtered, copied)
+		}
+	}
+	total := int64(len(filtered))
+	ordered := filtered
 	if order != nil && order.Column != "" {
-		ordered = make([]map[string]any, len(docs))
-		copy(ordered, docs)
+		ordered = make([]map[string]any, len(filtered))
+		copy(ordered, filtered)
 		col := order.Column
 		sort.SliceStable(ordered, func(i, j int) bool {
 			a := fmt.Sprint(ordered[i][col])
@@ -896,7 +1177,7 @@ func TestSyncRunWithMocks(t *testing.T) {
 		DestinationTable:        "applicants",
 		ChunkSize:               2,
 		Workers:                 2,
-		Config:                  datatypes.JSON([]byte(`{"default_sorting_field":"id","enable_nested_fields":false}`)),
+		Config:                  datatypes.JSON([]byte(`{"enable_nested_fields":false}`)),
 	}
 	if err := gdb.Create(&job).Error; err != nil {
 		t.Fatal(err)
@@ -957,11 +1238,11 @@ func TestSyncRunWithMocks(t *testing.T) {
 	if err := json.Unmarshal(dst.config, &got); err != nil {
 		t.Fatalf("decode prepare config: %v", err)
 	}
-	if got["default_sorting_field"] != "id" {
-		t.Fatalf("expected default_sorting_field=id, got %+v", got)
-	}
 	if got["enable_nested_fields"] != false {
 		t.Fatalf("expected enable_nested_fields=false, got %+v", got["enable_nested_fields"])
+	}
+	if _, ok := got["default_sorting_field"]; ok {
+		t.Fatalf("expected no default_sorting_field, got %+v", got)
 	}
 	if len(dst.batches) == 0 {
 		t.Fatal("expected batches to be written")
@@ -1716,6 +1997,12 @@ func TestSyncRunWithNestedHasMany(t *testing.T) {
 	if hello == nil {
 		t.Fatal("expected Ada post titled hello")
 	}
+	if fmt.Sprint(hello["id"]) != "10" {
+		t.Fatalf("expected post id 10, got %#v", hello["id"])
+	}
+	if fmt.Sprint(hello["user_id"]) != "1" {
+		t.Fatalf("expected post user_id 1 preserved, got %#v", hello["user_id"])
+	}
 	comments, ok := hello["comments"].([]map[string]any)
 	if !ok || len(comments) != 2 {
 		t.Fatalf("expected 2 comments on hello, got %#v", hello["comments"])
@@ -1866,6 +2153,114 @@ func TestSyncRunWithBelongsToAndRelationFields(t *testing.T) {
 	if _, exists := author["email"]; exists {
 		t.Fatalf("expected source email removed after rename, got %#v", author)
 	}
+	if fmt.Sprint(dst.batches[0][0]["user_id"]) != "10" {
+		t.Fatalf("expected foreign key user_id kept alongside author embed, got %#v", dst.batches[0][0])
+	}
+}
+
+func TestSyncRunBelongsToReplacesIdWhenNameMatchesFK(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{
+		Name: "src", Type: "mock_src", Config: datatypes.JSON([]byte(`{}`)),
+	}
+	dstConn := models.Connection{
+		Name: "dst", Type: "mock_dst", Config: datatypes.JSON([]byte(`{}`)),
+	}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "posts-user-id-embed",
+		SourceConnectionID:      srcConn.ID,
+		SourceTable:             "posts",
+		DestinationConnectionID: dstConn.ID,
+		DestinationTable:        "posts",
+		ChunkSize:               10,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Relation name == foreign_key: the bare id must be replaced with the full object.
+	if err := gdb.Create(&models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		Name:       "user_id",
+		Type:       models.RelationTypeBelongsTo,
+		Table:      "users",
+		ForeignKey: "user_id",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "title", Type: connectors.FieldTypeString},
+				{Name: "user_id", Type: connectors.FieldTypeInt64},
+			},
+		},
+		schemas: map[string]*connectors.TableSchema{
+			"posts": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "title", Type: connectors.FieldTypeString},
+					{Name: "user_id", Type: connectors.FieldTypeInt64},
+				},
+			},
+			"users": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "name", Type: connectors.FieldTypeString},
+				},
+			},
+		},
+		rows: []map[string]any{
+			{"id": 1, "title": "hello", "user_id": 10},
+		},
+		tableRows: map[string][]map[string]any{
+			"users": {
+				{"id": 10, "name": "Ada"},
+			},
+		},
+	}
+	dst := &mockDest{}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return dst, nil
+	})
+
+	r := setupRouter(t, gdb, registry)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/run", job.ID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var logEntry models.SyncLog
+	if err := json.Unmarshal(w.Body.Bytes(), &logEntry); err != nil {
+		t.Fatal(err)
+	}
+	if logEntry.Status != models.SyncLogStatusSuccess {
+		t.Fatalf("expected success, got %s (%s)", logEntry.Status, logEntry.Message)
+	}
+	if len(dst.batches) == 0 || len(dst.batches[0]) == 0 {
+		t.Fatal("expected written docs")
+	}
+	user, ok := dst.batches[0][0]["user_id"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected user_id to be full object, got %#v", dst.batches[0][0]["user_id"])
+	}
+	if fmt.Sprint(user["name"]) != "Ada" {
+		t.Fatalf("expected Ada, got %#v", user)
+	}
 }
 
 func TestEnsureID(t *testing.T) {
@@ -1878,9 +2273,18 @@ func TestEnsureID(t *testing.T) {
 	docs := []map[string]any{
 		{"uid": 10, "name": "x"},
 	}
-	connectors.EnsureID(docs, schema, 0)
+	connectors.EnsureID(docs, schema, 0, "id")
 	if docs[0]["id"] != "10" {
 		t.Fatalf("expected id 10, got %v", docs[0]["id"])
+	}
+
+	// Primary key wins over an existing id column when it is not the PK.
+	docs = []map[string]any{
+		{"id": 99, "uid": 10, "name": "x"},
+	}
+	connectors.EnsureID(docs, schema, 0, "id")
+	if docs[0]["id"] != "10" {
+		t.Fatalf("expected PK uid to override id, got %v", docs[0]["id"])
 	}
 }
 
@@ -1977,6 +2381,9 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 	if fmt.Sprint(preview.Rows[0]["full_name"]) != "a" {
 		t.Fatalf("expected renamed field full_name=a, got %#v", preview.Rows[0])
 	}
+	if preview.SortBy != "id" || preview.SortDir != "asc" {
+		t.Fatalf("expected default sort id asc, got %q %q", preview.SortBy, preview.SortDir)
+	}
 	wantCols := []string{"id", "full_name", "status"}
 	if len(preview.Columns) != len(wantCols) {
 		t.Fatalf("expected columns %v, got %v", wantCols, preview.Columns)
@@ -1985,6 +2392,50 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 		if preview.Columns[i] != c {
 			t.Fatalf("expected columns %v, got %v", wantCols, preview.Columns)
 		}
+	}
+
+	filterBody, _ := json.Marshal(map[string]any{
+		"side":      "source",
+		"page":      1,
+		"page_size": 10,
+		"filters": []map[string]any{
+			{"field": "full_name", "operator": "eq", "value": "c"},
+		},
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(filterBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 1 || len(preview.Rows) != 1 || fmt.Sprint(preview.Rows[0]["full_name"]) != "c" {
+		t.Fatalf("expected 1 filtered row full_name=c, got total=%d rows=%#v", preview.Total, preview.Rows)
+	}
+
+	destFilterBody, _ := json.Marshal(map[string]any{
+		"side":      "destination",
+		"page":      1,
+		"page_size": 10,
+		"filters": []map[string]any{
+			{"field": "full_name", "operator": "eq", "value": "a"},
+		},
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(destFilterBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore dest filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 1 || len(preview.Rows) != 1 || fmt.Sprint(preview.Rows[0]["full_name"]) != "a" {
+		t.Fatalf("expected 1 dest filtered row, got total=%d rows=%#v", preview.Total, preview.Rows)
 	}
 
 	sortBody, _ := json.Marshal(map[string]any{
@@ -2028,6 +2479,26 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 		t.Fatalf("expected full_name header in csv, got %q", csvText)
 	}
 
+	fieldsExportBody, _ := json.Marshal(map[string]any{
+		"side":   "source",
+		"fields": []string{"full_name"},
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore/export", job.ID), bytes.NewReader(fieldsExportBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("export fields status=%d body=%s", w.Code, w.Body.String())
+	}
+	fieldsCSV := w.Body.String()
+	headerLine := strings.SplitN(fieldsCSV, "\n", 2)[0]
+	if headerLine != "full_name" {
+		t.Fatalf("expected fields export header full_name only, got %q", headerLine)
+	}
+	if strings.Contains(headerLine, "status") || strings.Contains(headerLine, "id") {
+		t.Fatalf("fields export should omit other columns, got %q", headerLine)
+	}
+
 	destBody, _ := json.Marshal(map[string]any{"side": "destination", "page": 1, "page_size": 10})
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(destBody))
@@ -2041,6 +2512,29 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 	}
 	if preview.Total != 2 || len(preview.Rows) != 2 {
 		t.Fatalf("expected 2 destination rows, got total=%d rows=%d", preview.Total, len(preview.Rows))
+	}
+	destCols := append([]string(nil), preview.Columns...)
+	wantDestCols := []string{"id", "full_name", "status"}
+	if !reflect.DeepEqual(destCols, wantDestCols) {
+		t.Fatalf("expected destination columns %v, got %v", wantDestCols, destCols)
+	}
+
+	destSortBody, _ := json.Marshal(map[string]any{
+		"side": "destination", "page": 1, "page_size": 10,
+		"sort_by": "full_name", "sort_dir": "desc",
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(destSortBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore destination sort status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(preview.Columns, destCols) {
+		t.Fatalf("destination column order changed after sort: before %v after %v", destCols, preview.Columns)
 	}
 
 	badBody, _ := json.Marshal(map[string]any{"side": "neither"})
@@ -2061,3 +2555,122 @@ func TestExploreSyncJobSourceAndExport(t *testing.T) {
 	}
 }
 
+func TestExploreSourceBelongsToNestedFilter(t *testing.T) {
+	gdb := setupTestDB(t)
+
+	srcConn := models.Connection{Name: "src", Type: "mock_src", Config: datatypes.JSON([]byte(`{}`))}
+	dstConn := models.Connection{Name: "dst", Type: "mock_dst", Config: datatypes.JSON([]byte(`{}`))}
+	if err := gdb.Create(&srcConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&dstConn).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := models.SyncJob{
+		Name:                    "posts-explore",
+		SourceConnectionID:      srcConn.ID,
+		DestinationConnectionID: dstConn.ID,
+		SourceTable:             "posts",
+		DestinationTable:        "posts",
+		ChunkSize:               50,
+		Workers:                 1,
+	}
+	if err := gdb.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&models.SyncJobRelation{
+		SyncJobID:  job.ID,
+		Name:       "user",
+		Type:       models.RelationTypeBelongsTo,
+		Table:      "users",
+		ForeignKey: "user_id",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	posts := make([]map[string]any, 0, 200)
+	for i := 1; i <= 200; i++ {
+		uid := 1
+		if i%10 == 0 {
+			uid = 25
+		}
+		posts = append(posts, map[string]any{"id": i, "title": fmt.Sprintf("p%d", i), "user_id": uid})
+	}
+	src := &mockSource{
+		schema: &connectors.TableSchema{
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "title", Type: connectors.FieldTypeString},
+				{Name: "user_id", Type: connectors.FieldTypeInt64},
+			},
+		},
+		schemas: map[string]*connectors.TableSchema{
+			"posts": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "title", Type: connectors.FieldTypeString},
+					{Name: "user_id", Type: connectors.FieldTypeInt64},
+				},
+			},
+			"users": {
+				Columns: []connectors.ColumnSchema{
+					{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+					{Name: "bio", Type: connectors.FieldTypeString},
+				},
+			},
+		},
+		rows: posts,
+		tableRows: map[string][]map[string]any{
+			"users": {
+				{"id": 1, "bio": "other"},
+				{"id": 25, "bio": "Bio for Riley Lee (#25)"},
+			},
+		},
+	}
+	registry := connectors.NewRegistry()
+	registry.RegisterSource("mock_src", func(conn *models.Connection) (connectors.SourceReader, error) {
+		return src, nil
+	})
+	registry.RegisterDestination("mock_dst", func(conn *models.Connection) (connectors.DestinationWriter, error) {
+		return &mockDest{}, nil
+	})
+	r := setupRouter(t, gdb, registry)
+
+	body, _ := json.Marshal(map[string]any{
+		"side":      "source",
+		"page":      1,
+		"page_size": 10,
+		"filters": []map[string]any{
+			{"field": "user.bio", "operator": "eq", "value": "Bio for Riley Lee (#25)"},
+		},
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/sync-jobs/%d/explore", job.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("explore nested filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	var preview syncsvc.PreviewResult
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Total != 20 {
+		t.Fatalf("expected 20 posts for user 25, got total=%d", preview.Total)
+	}
+	if len(preview.Rows) != 10 {
+		t.Fatalf("expected page of 10, got %d", len(preview.Rows))
+	}
+	for _, row := range preview.Rows {
+		if fmt.Sprint(row["user_id"]) != "25" {
+			t.Fatalf("expected user_id 25, got %#v", row)
+		}
+		user, ok := row["user"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected nested user object, got %#v", row["user"])
+		}
+		if fmt.Sprint(user["bio"]) != "Bio for Riley Lee (#25)" {
+			t.Fatalf("expected matching bio, got %#v", user)
+		}
+	}
+}

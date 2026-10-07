@@ -20,12 +20,25 @@ func Singularize(name string) string {
 }
 
 // ResolveRelationKeys fills empty foreign_key / related_key from table name conventions.
+// related_key defaults only for belongs_to_many (pivot column). For has_many / has_one /
+// belongs_to, an empty related_key means "use the table primary key" at enrich time.
 func ResolveRelationKeys(sourceTable string, rel models.SyncJobRelation) models.SyncJobRelation {
-	if rel.ForeignKey == "" {
-		rel.ForeignKey = Singularize(sourceTable) + "_id"
-	}
-	if rel.RelatedKey == "" {
-		rel.RelatedKey = Singularize(rel.Table) + "_id"
+	switch rel.Type {
+	case models.RelationTypeBelongsTo:
+		if rel.ForeignKey == "" {
+			rel.ForeignKey = Singularize(rel.Table) + "_id"
+		}
+	case models.RelationTypeBelongsToMany:
+		if rel.ForeignKey == "" {
+			rel.ForeignKey = Singularize(sourceTable) + "_id"
+		}
+		if rel.RelatedKey == "" {
+			rel.RelatedKey = Singularize(rel.Table) + "_id"
+		}
+	default: // has_many, has_one, and unknown
+		if rel.ForeignKey == "" {
+			rel.ForeignKey = Singularize(sourceTable) + "_id"
+		}
 	}
 	return rel
 }
@@ -219,11 +232,15 @@ func enrichHasMany(
 ) error {
 	rel = ResolveRelationKeys(parentTable, rel)
 
-	parentPK, err := primaryKeyColumn(parentSchema)
-	if err != nil {
-		return fmt.Errorf("relation %q parent: %w", rel.Name, err)
+	localKey := rel.RelatedKey
+	if localKey == "" {
+		pk, err := primaryKeyColumn(parentSchema)
+		if err != nil {
+			return fmt.Errorf("relation %q parent: %w", rel.Name, err)
+		}
+		localKey = pk
 	}
-	ids := parentIDs(docs, parentPK)
+	ids := parentIDs(docs, localKey)
 	for _, doc := range docs {
 		doc[rel.Name] = []map[string]any{}
 	}
@@ -238,7 +255,7 @@ func enrichHasMany(
 
 	grouped := AssembleHasMany(childRows, rel.ForeignKey)
 	for _, doc := range docs {
-		pid := fmt.Sprint(doc[parentPK])
+		pid := fmt.Sprint(doc[localKey])
 		if rows, ok := grouped[pid]; ok {
 			doc[rel.Name] = rows
 		}
@@ -256,11 +273,15 @@ func enrichHasOne(
 ) error {
 	rel = ResolveRelationKeys(parentTable, rel)
 
-	parentPK, err := primaryKeyColumn(parentSchema)
-	if err != nil {
-		return fmt.Errorf("relation %q parent: %w", rel.Name, err)
+	localKey := rel.RelatedKey
+	if localKey == "" {
+		pk, err := primaryKeyColumn(parentSchema)
+		if err != nil {
+			return fmt.Errorf("relation %q parent: %w", rel.Name, err)
+		}
+		localKey = pk
 	}
-	ids := parentIDs(docs, parentPK)
+	ids := parentIDs(docs, localKey)
 	for _, doc := range docs {
 		doc[rel.Name] = nil
 	}
@@ -275,7 +296,7 @@ func enrichHasOne(
 
 	grouped := AssembleHasMany(childRows, rel.ForeignKey)
 	for _, doc := range docs {
-		pid := fmt.Sprint(doc[parentPK])
+		pid := fmt.Sprint(doc[localKey])
 		if rows, ok := grouped[pid]; ok && len(rows) > 0 {
 			doc[rel.Name] = rows[0]
 		}
@@ -291,16 +312,15 @@ func enrichBelongsTo(
 	docs []map[string]any,
 	rel models.SyncJobRelation,
 ) error {
-	if rel.ForeignKey == "" {
-		rel.ForeignKey = Singularize(rel.Table) + "_id"
-	}
-
-	for _, doc := range docs {
-		doc[rel.Name] = nil
-	}
+	rel = ResolveRelationKeys("", rel)
 
 	fkIDs := parentIDs(docs, rel.ForeignKey)
 	if len(fkIDs) == 0 {
+		for _, doc := range docs {
+			if rel.Name != rel.ForeignKey {
+				doc[rel.Name] = nil
+			}
+		}
 		return nil
 	}
 
@@ -308,18 +328,21 @@ func enrichBelongsTo(
 	if err != nil {
 		return fmt.Errorf("relation %q related schema: %w", rel.Name, err)
 	}
-	relatedPK, err := primaryKeyColumn(relatedSchema)
-	if err != nil {
-		return fmt.Errorf("relation %q related: %w", rel.Name, err)
+	ownerKey := rel.RelatedKey
+	if ownerKey == "" {
+		ownerKey, err = primaryKeyColumn(relatedSchema)
+		if err != nil {
+			return fmt.Errorf("relation %q related: %w", rel.Name, err)
+		}
 	}
-	relatedRows, err := src.QueryRows(ctx, rel.Table, nil, relatedPK, fkIDs)
+	relatedRows, err := src.QueryRows(ctx, rel.Table, nil, ownerKey, fkIDs)
 	if err != nil {
 		return fmt.Errorf("relation %q related query: %w", rel.Name, err)
 	}
 
 	byID := make(map[string]map[string]any, len(relatedRows))
 	for _, row := range relatedRows {
-		if v, ok := row[relatedPK]; ok && v != nil {
+		if v, ok := row[ownerKey]; ok && v != nil {
 			copied := make(map[string]any, len(row))
 			for k, val := range row {
 				copied[k] = val
@@ -330,11 +353,19 @@ func enrichBelongsTo(
 	for _, doc := range docs {
 		fk, ok := doc[rel.ForeignKey]
 		if !ok || fk == nil {
+			if rel.Name != rel.ForeignKey {
+				doc[rel.Name] = nil
+			}
 			continue
 		}
-		if related, ok := byID[fmt.Sprint(fk)]; ok {
-			doc[rel.Name] = related
+		related, ok := byID[fmt.Sprint(fk)]
+		if !ok {
+			if rel.Name != rel.ForeignKey {
+				doc[rel.Name] = nil
+			}
+			continue
 		}
+		doc[rel.Name] = related
 	}
 	return nil
 }
@@ -540,29 +571,81 @@ func enrichDocs(
 	return nil
 }
 
-// SchemaWithRelations appends active root-level relation columns onto a base table schema.
-// Nested relations (parent_id set) are omitted; Typesense indexes them via enable_nested_fields.
-func SchemaWithRelations(base *connectors.TableSchema, relations []models.SyncJobRelation) *connectors.TableSchema {
+// LoadRelationSchemas introspects each distinct active relation table once.
+func LoadRelationSchemas(ctx context.Context, src connectors.SourceReader, relations []models.SyncJobRelation) (map[string]*connectors.TableSchema, error) {
+	out := make(map[string]*connectors.TableSchema)
+	for _, rel := range relations {
+		if !rel.IsActive() || rel.Table == "" {
+			continue
+		}
+		if _, ok := out[rel.Table]; ok {
+			continue
+		}
+		schema, err := src.Schema(ctx, rel.Table)
+		if err != nil {
+			return nil, fmt.Errorf("relation table %q schema: %w", rel.Table, err)
+		}
+		out[rel.Table] = schema
+	}
+	return out, nil
+}
+
+// DestinationSchema builds the destination table schema: root fields, then nested
+// relation columns with related-table fields/types and child relations.
+func DestinationSchema(ctx context.Context, src connectors.SourceReader, base *connectors.TableSchema, job *models.SyncJob) (*connectors.TableSchema, error) {
+	related, err := LoadRelationSchemas(ctx, src, job.Relations)
+	if err != nil {
+		return nil, err
+	}
+	return SchemaWithFields(SchemaWithRelations(base, job.Relations, related), job.Fields), nil
+}
+
+// SchemaWithRelations appends active relation columns onto a base table schema.
+// Each relation includes related-table columns from related[table] (after field
+// overrides) plus nested child relations under Columns.
+func SchemaWithRelations(base *connectors.TableSchema, relations []models.SyncJobRelation, related map[string]*connectors.TableSchema) *connectors.TableSchema {
 	out := &connectors.TableSchema{
 		Columns: make([]connectors.ColumnSchema, len(base.Columns), len(base.Columns)+len(relations)),
 	}
 	copy(out.Columns, base.Columns)
+
+	children := map[uint][]models.SyncJobRelation{}
+	var roots []models.SyncJobRelation
 	for _, rel := range relations {
 		if !rel.IsActive() {
 			continue
 		}
-		if rel.ParentID != nil {
+		if rel.ParentID == nil {
+			roots = append(roots, rel)
 			continue
 		}
-		ft := connectors.FieldTypeObjectArray
-		switch rel.Type {
-		case models.RelationTypeHasOne, models.RelationTypeBelongsTo:
-			ft = connectors.FieldTypeObject
-		}
-		out.Columns = append(out.Columns, connectors.ColumnSchema{
-			Name: rel.Name,
-			Type: ft,
-		})
+		children[*rel.ParentID] = append(children[*rel.ParentID], rel)
+	}
+	for _, rel := range roots {
+		out.Columns = append(out.Columns, relationColumn(rel, children, related))
 	}
 	return out
+}
+
+func relationColumn(rel models.SyncJobRelation, children map[uint][]models.SyncJobRelation, related map[string]*connectors.TableSchema) connectors.ColumnSchema {
+	ft := connectors.FieldTypeObjectArray
+	switch rel.Type {
+	case models.RelationTypeHasOne, models.RelationTypeBelongsTo:
+		ft = connectors.FieldTypeObject
+	}
+	col := connectors.ColumnSchema{Name: rel.Name, Type: ft}
+
+	if base := related[rel.Table]; base != nil {
+		shaped := SchemaWithFields(base, rel.Fields)
+		if shaped != nil {
+			col.Columns = append(col.Columns, shaped.Columns...)
+		}
+	}
+	for _, child := range children[rel.ID] {
+		if !child.IsActive() {
+			continue
+		}
+		col.Columns = append(col.Columns, relationColumn(child, children, related))
+	}
+	return col
 }

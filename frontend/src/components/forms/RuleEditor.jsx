@@ -1,9 +1,7 @@
 import { RULE_OPERATORS, ruleNeedsValue } from '../../lib/ruleOperators'
 import AutocompleteInput from '../AutocompleteInput'
-import { IconButton, SecondaryButton } from '../ui'
-
-const compactInput =
-  'w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-soft)]'
+import { TrashIcon } from '../icons'
+import { Checkbox, IconButton, SecondaryButton, compactInputClassName } from '../ui'
 
 function emptyRule() {
   return {
@@ -15,25 +13,12 @@ function emptyRule() {
   }
 }
 
-function TrashIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 7h16M9 7V5h6v2M8 7l1 12h6l1-12"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
 export default function RuleEditor({
   rules,
   onChange,
   sourceColumns = [],
   onNeedSourceColumns,
+  hideHeader = false,
 }) {
   function updateRow(index, patch) {
     onChange(rules.map((row, i) => (i === index ? { ...row, ...patch } : row)))
@@ -45,18 +30,25 @@ export default function RuleEditor({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2">
-          <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
-            03
-          </span>
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--text)]">Filter rules</h3>
-            <p className="text-xs text-[var(--text-muted)]">
-              Only rows matching all active rules are imported. Example: client_id = 123.
-            </p>
+      <div
+        className={[
+          'flex items-start gap-3',
+          hideHeader ? 'justify-end' : 'justify-between',
+        ].join(' ')}
+      >
+        {hideHeader ? null : (
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
+              03
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--text)]">Filter rules</h3>
+              <p className="text-xs text-[var(--text-muted)]">
+                Only rows matching all active rules are imported. Example: client_id = 123.
+              </p>
+            </div>
           </div>
-        </div>
+        )}
         <SecondaryButton type="button" onClick={() => onChange([...rules, emptyRule()])}>
           Add rule
         </SecondaryButton>
@@ -80,8 +72,8 @@ export default function RuleEditor({
                 <th className="px-3 py-2 font-mono text-[10px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
                   Value
                 </th>
-                <th className="px-3 py-2 font-mono text-[10px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
-                  Active
+                <th className="w-16 px-3 py-2 text-center font-mono text-[10px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
+                  On
                 </th>
                 <th className="w-10 px-2 py-2" />
               </tr>
@@ -94,7 +86,7 @@ export default function RuleEditor({
                     <td className="px-3 py-2">
                       <AutocompleteInput
                         required
-                        className={compactInput}
+                        className={compactInputClassName}
                         options={sourceColumns}
                         value={row.field}
                         onFocus={onNeedSourceColumns}
@@ -104,7 +96,7 @@ export default function RuleEditor({
                     </td>
                     <td className="px-3 py-2">
                       <select
-                        className={compactInput}
+                        className={compactInputClassName}
                         value={row.operator}
                         onChange={(e) => {
                           const operator = e.target.value
@@ -125,7 +117,7 @@ export default function RuleEditor({
                       {needsValue ? (
                         <input
                           required
-                          className={compactInput}
+                          className={compactInputClassName}
                           value={row.value}
                           onChange={(e) => updateRow(index, { value: e.target.value })}
                           placeholder={row.operator === 'in' || row.operator === 'not_in' ? 'a, b, c' : '123'}
@@ -134,13 +126,14 @@ export default function RuleEditor({
                         <span className="font-mono text-xs text-[var(--text-muted)]">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-[var(--accent)]"
-                        checked={row.active !== false}
-                        onChange={(e) => updateRow(index, { active: e.target.checked })}
-                      />
+                    <td className="px-3 py-2 text-center align-middle">
+                      <div className="flex justify-center">
+                        <Checkbox
+                          checked={row.active !== false}
+                          onChange={(on) => updateRow(index, { active: on })}
+                          aria-label="Active"
+                        />
+                      </div>
                     </td>
                     <td className="px-2 py-2">
                       <IconButton type="button" label="Remove rule" tone="danger" onClick={() => removeRow(index)}>

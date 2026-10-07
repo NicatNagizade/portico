@@ -1,8 +1,10 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import ConnectionsPage from './pages/ConnectionsPage'
+import ConnectionDetailPage from './pages/ConnectionDetailPage'
 import ConnectionFormPage from './pages/ConnectionFormPage'
 import ExplorePage from './pages/ExplorePage'
+import LandingPage from './pages/LandingPage'
 import SyncJobsPage from './pages/SyncJobsPage'
 import SyncJobFormPage from './pages/SyncJobFormPage'
 import SyncJobDetailPage from './pages/SyncJobDetailPage'
@@ -13,10 +15,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route index element={<LandingPage />} />
         <Route element={<Layout />}>
-          <Route index element={<Navigate to="/connections" replace />} />
           <Route path="connections" element={<ConnectionsPage />} />
           <Route path="connections/new" element={<ConnectionFormPage />} />
+          <Route path="connections/:id" element={<ConnectionDetailPage />} />
           <Route path="connections/:id/edit" element={<ConnectionFormPage />} />
           <Route path="sync-jobs" element={<SyncJobsPage />} />
           <Route path="sync-jobs/new" element={<SyncJobFormPage />} />

@@ -1,12 +1,13 @@
 # Portico
 
-Sync API + admin UI. Sources (MySQL / Postgres today) → destinations (Typesense today). Structure is ready for more pairs (e.g. MySQL → MySQL, MySQL → MongoDB) without rewriting the orchestrator.
+Sync API + admin UI. Connections (MySQL / Postgres / SQLite / Typesense / MongoDB / Redis) work as both sources and destinations. Structure is ready for more pairs without rewriting the orchestrator.
 
 ## Layout
 
 | Path | Role |
 |------|------|
 | `backend/` | Go API — Gin + GORM |
+| `backend/cmd/` | CLI entrypoints (`api`, `migrate`, `import-connections`, `run-sync`) |
 | `backend/internal/handlers/` | HTTP handlers split by concern (`handlers.go`, `connections.go`, `sync_jobs.go`, `sync_logs.go`) |
 | `backend/internal/connectors/` | Source/destination connectors; shared SQL in `sqlutil/` |
 | `frontend/` | React admin UI — Vite + Tailwind |
@@ -21,13 +22,16 @@ make setup                              # deps + .env files
 make api                                # backend :8080
 make frontend                           # Vite :5173 (proxies /api)
 make test                               # backend tests (needs CGO)
+make test-frontend                      # Playwright (frontend/tests)
 make swagger                            # regenerate backend/docs/swagger.json only
 make lint                               # frontend oxlint
 make migrate-refresh                    # DESTRUCTIVE: drop all app tables + AutoMigrate
+make import-connections                 # upsert from backend/connections.json (see .example)
+make run-sync ID=1                      # run a sync job from the CLI (no API)
 make example-migrate && make example-seed
 ```
 
-No Docker in the default workflow — run locally with `go run` / Vite. App DB is created on migrate if missing (`DB_*` vars, never `DATABASE_URL`).
+No Docker in the default workflow — run locally with `go run` / Vite. App DB is created on migrate if missing (`DB_*` vars, never `DATABASE_URL`). Copy `backend/connections.json.example` → `backend/connections.json` (gitignored) to bootstrap connector credentials and optional sync jobs (fields/rules/relations) into the DB; optional `CONNECTIONS_FILE` overrides the path.
 
 ## Working style (non-negotiable)
 
@@ -67,7 +71,7 @@ These come from how this project is built day to day. Prefer them over “clever
 - Swagger: update swag comments → `make swagger` → **JSON only** (`backend/docs/swagger.json`). UI at `/api/documentation`.
 - Status-like columns: store as tinyint/int in DB; map meanings in Go/JS constants — no DB enum constraints.
 - Prefer ON DELETE CASCADE (or equivalent) for parent→child rows (e.g. sync job → sync logs) so deletes work without manual cleanup.
-- Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR`.
+- Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR`, optional `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` (explore Ask AI).
 
 ### Frontend
 
@@ -77,11 +81,11 @@ These come from how this project is built day to day. Prefer them over “clever
 
 ## Domain model
 
-- **Connections** — `mysql` | `postgres` | `typesense` (| `mongodb` reserved). Config JSON sealed at rest.
+- **Connections** — `mysql` | `postgres` | `sqlite` | `typesense` | `mongodb` | `redis`. Each type can be source or destination. Config JSON sealed at rest. Redis stores JSON docs at `{table}:{id}`.
 - **Sync jobs** — `source_connection_id` → `source_table` → `destination_connection_id` → `destination_table`, plus `chunk_size`, `workers`, opaque `config`.
-- **Fields** — optional overrides (rename / type / exclude). Omit all → pass through every source column. `active=false` → exclude from import. Coerce values to the declared destination type before write (e.g. object → string when type is string). Nullable `sync_job_relation_id` scopes a field to a relation’s related rows; omit for root/source fields.
-- **Rules** — optional source filters (`field` + `operator` + `value`) AND’d before Count/Read. Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `like`, `is_null`, `is_not_null`. `active=false` skips the rule. Applied at the source SQL layer (not post-fetch).
-- **Relations** — `belongs_to_many` / `has_many` / `has_one` / `belongs_to` (+ optional `parent_id` pointing at another `sync_job_relations.id` for nesting). `belongs_to_many` stores `pivot_table` inside relation `config` JSON. Always select all related columns. Empty FK/key fields fall back to the related field name. Emit arrays/nested objects in the destination doc — not flattened joins. `active=false` skips the relation.
+- **Fields** — optional overrides (rename / type / exclude / value maps). Omit all → pass through every source column. `active=false` → exclude from import. Coerce values to the declared destination type before write (e.g. object → string when type is string). Root fields live on the sync job; relation field overrides nest under that relation’s `fields[]`. Optional `values` (`sync_job_fields_values`) map source cell values to destination values (e.g. `1` → `success`); unmatched values pass through.
+- **Rules** — optional source filters (`field` + `operator` + `value`) AND’d before Count/Read. Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `like`, `is_null`, `is_not_null`. `active=false` skips the rule. Applied by the source connector (SQL WHERE or in-memory for document stores).
+- **Relations** — `belongs_to_many` / `has_many` / `has_one` / `belongs_to`. Nest children under `relations[]` and field overrides under `fields[]` on the parent relation (DB still stores `parent_id` / `sync_job_relation_id`). `belongs_to_many` stores `pivot_table` inside relation `config` JSON. Always select all related columns. Empty FK/key fields fall back to the related field name. Emit arrays/nested objects in the destination doc — not flattened joins. `active=false` skips the relation.
 - **Sync logs** — status, `rows_total` (source count at start), `rows_synced` (updated after each chunk), `duration_ms` (updated with progress). Progress UI = `rows_synced / rows_total` — nothing fancier.
 - **Sync behavior** — destination is prepared/cleared then bulk-written in chunks from the job’s `chunk_size`.
 

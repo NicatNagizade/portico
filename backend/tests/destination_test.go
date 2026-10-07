@@ -15,7 +15,10 @@ func TestBuildCollectionSchemaDefaults(t *testing.T) {
 		},
 	}
 
-	coll := typesense.BuildCollectionSchema("applicants", schema, nil)
+	coll, err := typesense.BuildCollectionSchema("applicants", schema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if coll.Name != "applicants" {
 		t.Fatalf("name=%q", coll.Name)
 	}
@@ -24,6 +27,28 @@ func TestBuildCollectionSchemaDefaults(t *testing.T) {
 	}
 	if coll.DefaultSortingField != nil {
 		t.Fatalf("expected no default_sorting_field by default, got %q", *coll.DefaultSortingField)
+	}
+
+	var hasName, hasIDInt bool
+	for _, f := range coll.Fields {
+		if f.Name == "id" {
+			t.Fatalf("document id must not be declared in schema fields, got %+v", f)
+		}
+		if f.Name == "name" {
+			hasName = true
+		}
+		if f.Name == typesense.SortableIDField {
+			hasIDInt = true
+			if f.Type != "int64" {
+				t.Fatalf("id_int type=%q", f.Type)
+			}
+			if f.Sort == nil || !*f.Sort {
+				t.Fatal("expected id_int sort=true")
+			}
+		}
+	}
+	if !hasName || !hasIDInt {
+		t.Fatalf("expected name + id_int fields, got %+v", coll.Fields)
 	}
 }
 
@@ -43,7 +68,10 @@ func TestBuildCollectionSchemaOverrides(t *testing.T) {
 		TokenSeparators:     []string{"-"},
 	}
 
-	coll := typesense.BuildCollectionSchema("scores", schema, cfg)
+	coll, err := typesense.BuildCollectionSchema("scores", schema, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if coll.DefaultSortingField == nil || *coll.DefaultSortingField != "score" {
 		t.Fatalf("default_sorting_field=%v", coll.DefaultSortingField)
 	}
@@ -58,9 +86,82 @@ func TestBuildCollectionSchemaOverrides(t *testing.T) {
 	}
 }
 
+func TestBuildCollectionSchemaMapsIDSortToIDInt(t *testing.T) {
+	schema := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+			{Name: "name", Type: connectors.FieldTypeString},
+		},
+	}
+	id := "id"
+	coll, err := typesense.BuildCollectionSchema("applicants", schema, &typesense.CollectionConfig{
+		DefaultSortingField: &id,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coll.DefaultSortingField == nil || *coll.DefaultSortingField != typesense.SortableIDField {
+		t.Fatalf("expected default_sorting_field=%s, got %v", typesense.SortableIDField, coll.DefaultSortingField)
+	}
+}
+
+func TestBuildCollectionSchemaCustomPrimaryKeyInt(t *testing.T) {
+	schema := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+			{Name: "name", Type: connectors.FieldTypeString},
+		},
+	}
+	cfg, err := typesense.ParseCollectionConfig([]byte(`{"primary_key":{"source":"id","int":"pk_int"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coll, err := typesense.BuildCollectionSchema("applicants", schema, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hasPKInt bool
+	for _, f := range coll.Fields {
+		if f.Name == "pk_int" {
+			hasPKInt = true
+			if f.Type != "int64" {
+				t.Fatalf("pk_int type=%q", f.Type)
+			}
+		}
+		if f.Name == typesense.SortableIDField {
+			t.Fatal("default id_int should not be present when primary_key.int is set")
+		}
+	}
+	if !hasPKInt {
+		t.Fatalf("expected pk_int field, got %+v", coll.Fields)
+	}
+}
+
+func TestBuildCollectionSchemaNoIntCompanion(t *testing.T) {
+	schema := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+			{Name: "name", Type: connectors.FieldTypeString},
+		},
+	}
+	cfg, err := typesense.ParseCollectionConfig([]byte(`{"primary_key":{"source":["user_id","post_id"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coll, err := typesense.BuildCollectionSchema("posts", schema, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range coll.Fields {
+		if f.Name == typesense.SortableIDField || f.Name == "id_int" {
+			t.Fatalf("expected no int companion, got %+v", coll.Fields)
+		}
+	}
+}
+
 func TestParseCollectionConfig(t *testing.T) {
 	cfg, err := typesense.ParseCollectionConfig(nil)
-	if err != nil || cfg != nil {
+	if err != nil || cfg == nil || cfg.SortableID() != typesense.SortableIDField {
 		t.Fatalf("nil config: cfg=%v err=%v", cfg, err)
 	}
 	cfg, err = typesense.ParseCollectionConfig([]byte(`{"default_sorting_field":"id","enable_nested_fields":false}`))

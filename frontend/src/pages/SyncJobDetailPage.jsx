@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { deleteSyncJob, getSyncJob, startSyncJob } from '../api/syncJobs'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { BackIcon, DeleteIcon, EditIcon, LogsIcon, PlayIcon, SpinnerIcon } from '../components/icons'
 import {
   ErrorBanner,
   IconButton,
@@ -16,86 +17,45 @@ import { formatDate } from '../lib/format'
 import { ruleNeedsValue, ruleOperatorLabel } from '../lib/ruleOperators'
 import { parseConfig } from '../lib/connectionTypes'
 
-function Icon({ children }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      {children}
-    </svg>
-  )
+function countRelations(relations = []) {
+  return relations.reduce((n, r) => n + 1 + countRelations(r.relations || []), 0)
 }
 
-function BackIcon() {
+function RelationListItem({ relation }) {
+  const relConfig = parseConfig(relation.config)
+  const children = relation.relations || []
   return (
-    <Icon>
-      <path
-        d="M15 6 9 12l6 6"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
-  )
-}
-
-function EditIcon() {
-  return (
-    <Icon>
-      <path
-        d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3Z"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinejoin="round"
-      />
-      <path d="m13.5 6.5 3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    </Icon>
-  )
-}
-
-function PlayIcon() {
-  return (
-    <Icon>
-      <path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor" />
-    </Icon>
-  )
-}
-
-function SpinnerIcon() {
-  return (
-    <svg
-      className="animate-spin"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="2" opacity="0.35" />
-      <path d="M12 4a8 8 0 0 1 8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function LogsIcon() {
-  return (
-    <Icon>
-      <path d="M5 4h14v16H5V4Z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
-      <path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-    </Icon>
-  )
-}
-
-function DeleteIcon() {
-  return (
-    <Icon>
-      <path
-        d="M4 7h16M9 7V5h6v2M6.5 7l.8 13h9.4l.8-13"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Icon>
+    <li className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/60 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-semibold">{relation.name}</span>
+        <MetaChip>{relation.active === false ? 'inactive' : 'active'}</MetaChip>
+      </div>
+      <p className="mt-2 font-mono text-xs leading-relaxed text-[var(--text-muted)]">
+        {relation.type} · table={relation.table}
+        {relConfig.pivot_table ? ` · pivot=${relConfig.pivot_table}` : ''}
+        {relation.foreign_key ? ` · fk=${relation.foreign_key}` : ''}
+        {relation.related_key ? ` · rk=${relation.related_key}` : ''}
+      </p>
+      {(relation.fields || []).length > 0 ? (
+        <ul className="mt-3 space-y-1 border-t border-[var(--border)] pt-3">
+          {relation.fields.map((field) => (
+            <li key={field.id} className="font-mono text-xs text-[var(--text-muted)]">
+              {field.source_name}
+              {field.destination_name ? ` → ${field.destination_name}` : ''}
+              {field.destination_type ? ` (${field.destination_type})` : ''}
+              {(field.values || []).length > 0 ? ` · ${field.values.length} value map(s)` : ''}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {children.length > 0 ? (
+        <ul className="mt-3 space-y-3 border-t border-[var(--border)] pt-3">
+          {children.map((child) => (
+            <RelationListItem key={child.id} relation={child} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
   )
 }
 
@@ -327,20 +287,34 @@ export default function SyncJobDetailPage() {
           ) : (
             <ul className="divide-y divide-[var(--border)]">
               {job.fields.map((field) => (
-                <li key={field.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
-                  <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-                    <span className="rounded-md bg-[var(--bg-elevated)] px-2 py-1">{field.source_name}</span>
-                    {field.destination_name ? (
-                      <>
-                        <span className="text-[var(--text-muted)]">→</span>
-                        <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[var(--accent-ink)]">
-                          {field.destination_name}
-                        </span>
-                      </>
-                    ) : null}
-                    {field.destination_type ? <MetaChip>{field.destination_type}</MetaChip> : null}
+                <li key={field.id} className="space-y-2 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+                      <span className="rounded-md bg-[var(--bg-elevated)] px-2 py-1">{field.source_name}</span>
+                      {field.destination_name ? (
+                        <>
+                          <span className="text-[var(--text-muted)]">→</span>
+                          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[var(--accent-ink)]">
+                            {field.destination_name}
+                          </span>
+                        </>
+                      ) : null}
+                      {field.destination_type ? <MetaChip>{field.destination_type}</MetaChip> : null}
+                    </div>
+                    <MetaChip>{field.active === false ? 'inactive' : 'active'}</MetaChip>
                   </div>
-                  <MetaChip>{field.active === false ? 'inactive' : 'active'}</MetaChip>
+                  {(field.values || []).length > 0 ? (
+                    <ul className="flex flex-wrap gap-1.5 pl-1 font-mono text-[11px] text-[var(--text-muted)]">
+                      {field.values.map((v) => (
+                        <li
+                          key={v.id}
+                          className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)]/70 px-2 py-0.5"
+                        >
+                          {v.source_value} → {v.destination_value}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -349,46 +323,16 @@ export default function SyncJobDetailPage() {
 
         <Panel
           title="Relations"
-          description={`${(job.relations || []).length} configured`}
+          description={`${countRelations(job.relations)} configured`}
           className="animate-fade-up stagger-5 lg:col-span-2"
         >
           {(job.relations || []).length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">No relations configured.</p>
           ) : (
             <ul className="space-y-3">
-              {job.relations.map((relation) => {
-                const relConfig = parseConfig(relation.config)
-                const parent = (job.relations || []).find((r) => r.id === relation.parent_id)
-                return (
-                  <li
-                    key={relation.id}
-                    className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/60 p-4"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-semibold">{relation.name}</span>
-                      <MetaChip>{relation.active === false ? 'inactive' : 'active'}</MetaChip>
-                    </div>
-                    <p className="mt-2 font-mono text-xs leading-relaxed text-[var(--text-muted)]">
-                      {relation.type} · table={relation.table}
-                      {relConfig.pivot_table ? ` · pivot=${relConfig.pivot_table}` : ''}
-                      {relation.foreign_key ? ` · fk=${relation.foreign_key}` : ''}
-                      {relation.related_key ? ` · rk=${relation.related_key}` : ''}
-                      {parent ? ` · parent=${parent.name}` : ''}
-                    </p>
-                    {(relation.fields || []).length > 0 ? (
-                      <ul className="mt-3 space-y-1 border-t border-[var(--border)] pt-3">
-                        {relation.fields.map((field) => (
-                          <li key={field.id} className="font-mono text-xs text-[var(--text-muted)]">
-                            {field.source_name}
-                            {field.destination_name ? ` → ${field.destination_name}` : ''}
-                            {field.destination_type ? ` (${field.destination_type})` : ''}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </li>
-                )
-              })}
+              {job.relations.map((relation) => (
+                <RelationListItem key={relation.id} relation={relation} />
+              ))}
             </ul>
           )}
         </Panel>

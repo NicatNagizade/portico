@@ -1,8 +1,10 @@
 import { download, request } from './client'
 import { buildQuery, normalizePage } from './pagination'
 
-export function listSyncJobs({ page = 1, pageSize = 20 } = {}) {
-  return request(`/sync-jobs${buildQuery({ page, page_size: pageSize })}`).then(normalizePage)
+export function listSyncJobs({ connectionId, page = 1, pageSize = 20 } = {}) {
+  return request(
+    `/sync-jobs${buildQuery({ connection_id: connectionId, page, page_size: pageSize })}`,
+  ).then(normalizePage)
 }
 
 export function getSyncJob(id) {
@@ -29,11 +31,17 @@ export function startSyncJob(id) {
   return request(`/sync-jobs/${id}/start`, { method: 'POST' })
 }
 
-export function exploreSyncJob(id, { side, page = 1, pageSize = 50, sortBy = '', sortDir = '' } = {}) {
+export function exploreSyncJob(
+  id,
+  { side, page = 1, pageSize = 50, sortBy = '', sortDir = '', filters = [] } = {},
+) {
   const body = { side, page, page_size: pageSize }
   if (sortBy) {
     body.sort_by = sortBy
     body.sort_dir = sortDir || 'asc'
+  }
+  if (filters.length) {
+    body.filters = filters
   }
   return request(`/sync-jobs/${id}/explore`, {
     method: 'POST',
@@ -41,10 +49,18 @@ export function exploreSyncJob(id, { side, page = 1, pageSize = 50, sortBy = '',
   })
 }
 
-export function exportSyncJobCSV(id, { side } = {}) {
+export function exportSyncJobCSV(id, { side, filters = [], fields } = {}) {
+  const body = { side }
+  if (filters.length) {
+    body.filters = filters
+  }
+  // null/undefined = all columns; array (including empty) = only those fields
+  if (fields != null) {
+    body.fields = fields
+  }
   return download(`/sync-jobs/${id}/explore/export`, {
     method: 'POST',
-    body: { side },
+    body,
     filename: `explore-${side}.csv`,
   })
 }

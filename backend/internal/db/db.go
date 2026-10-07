@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,7 @@ func migrate(gdb *gorm.DB) error {
 		&models.SyncJob{},
 		&models.SyncJobRelation{},
 		&models.SyncJobField{},
+		&models.SyncJobFieldValue{},
 		&models.SyncJobRule{},
 		&models.SyncLog{},
 	); err != nil {
@@ -63,6 +65,7 @@ func Refresh(gdb *gorm.DB) error {
 	if err := gdb.Migrator().DropTable(
 		&models.SyncLog{},
 		&models.SyncJobRule{},
+		&models.SyncJobFieldValue{},
 		&models.SyncJobField{},
 		&models.SyncJobRelation{},
 		&models.SyncJob{},
@@ -88,6 +91,20 @@ func sealPlaintextConnectionConfigs(gdb *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// OpenFromEnv loads config, sets APP_KEY, and opens the app database.
+func OpenFromEnv() (*gorm.DB, *config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, nil, fmt.Errorf("load config: %w", err)
+	}
+	secretbox.SetKey(os.Getenv("APP_KEY"))
+	gdb, err := Open(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connect db: %w", err)
+	}
+	return gdb, cfg, nil
 }
 
 // Open ensures the configured Postgres database exists, then connects and auto-migrates.

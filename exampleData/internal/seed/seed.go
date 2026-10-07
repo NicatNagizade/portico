@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/portico/exampledata/internal/config"
 )
 
@@ -37,13 +36,20 @@ var commentBodies = []string{
 	"I had a similar experience.", "Not sure I follow.", "Love this.", "Bookmarked.",
 }
 
+type store interface {
+	Prepare(ctx context.Context) error
+	Copy(ctx context.Context, table string, columns []string, rows [][]any) error
+	Finalize(ctx context.Context, maxUser, maxPost, maxComment, maxReaction int64) error
+	Close()
+}
+
 // Run truncates existing example tables and bulk-loads fake users/posts/comments/reactions.
 func Run(ctx context.Context, cfg *config.Config) error {
-	conn, err := pgx.Connect(ctx, cfg.DSN())
+	st, err := openStore(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
-	defer conn.Close(ctx)
+	defer st.Close()
 
 	start := time.Now()
 	log.Printf(
@@ -52,7 +58,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		cfg.ReactionChance*100,
 	)
 
-	if err := prepareForLoad(ctx, conn); err != nil {
+	if err := st.Prepare(ctx); err != nil {
 		return err
 	}
 
@@ -72,7 +78,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			to = cfg.UserCount
 		}
 
-		stats, err := seedUserBatch(ctx, conn, cfg, rng, from, to, nextPostID, nextCommentID, nextReactionID)
+		stats, err := seedUserBatch(ctx, st, cfg, rng, from, to, nextPostID, nextCommentID, nextReactionID)
 		if err != nil {
 			return fmt.Errorf("seed users %d–%d: %w", from, to, err)
 		}
@@ -89,7 +95,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		)
 	}
 
-	if err := finalizeLoad(ctx, conn, int64(cfg.UserCount), nextPostID-1, nextCommentID-1, nextReactionID-1); err != nil {
+	if err := st.Finalize(ctx, int64(cfg.UserCount), nextPostID-1, nextCommentID-1, nextReactionID-1); err != nil {
 		return err
 	}
 
@@ -101,6 +107,13 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
+func openStore(ctx context.Context, cfg *config.Config) (store, error) {
+	if cfg.IsMySQL() {
+		return openMySQLStore(ctx, cfg)
+	}
+	return openPostgresStore(ctx, cfg)
+}
+
 type batchStats struct {
 	posts          int64
 	comments       int64
@@ -110,85 +123,9 @@ type batchStats struct {
 	nextReactionID int64
 }
 
-func prepareForLoad(ctx context.Context, conn *pgx.Conn) error {
-	log.Println("truncating tables and dropping secondary indexes for faster load…")
-	stmts := []string{
-		`TRUNCATE reactions, comments, posts, users RESTART IDENTITY CASCADE`,
-		`DROP INDEX IF EXISTS users_username_idx`,
-		`DROP INDEX IF EXISTS users_email_idx`,
-		`DROP INDEX IF EXISTS posts_user_id_idx`,
-		`DROP INDEX IF EXISTS posts_created_at_idx`,
-		`DROP INDEX IF EXISTS comments_post_id_idx`,
-		`DROP INDEX IF EXISTS comments_user_id_idx`,
-		`DROP INDEX IF EXISTS reactions_comment_id_idx`,
-		`DROP INDEX IF EXISTS reactions_user_id_idx`,
-		`DROP INDEX IF EXISTS reactions_type_idx`,
-		`ALTER TABLE reactions DROP CONSTRAINT IF EXISTS reactions_comment_user_unique`,
-	}
-	for _, s := range stmts {
-		if _, err := conn.Exec(ctx, s); err != nil {
-			return fmt.Errorf("prepare: %w", err)
-		}
-	}
-	return nil
-}
-
-func finalizeLoad(ctx context.Context, conn *pgx.Conn, maxUser, maxPost, maxComment, maxReaction int64) error {
-	log.Println("restoring indexes and sequences…")
-
-	if err := setSerial(ctx, conn, "users", maxUser); err != nil {
-		return err
-	}
-	if err := setSerial(ctx, conn, "posts", maxPost); err != nil {
-		return err
-	}
-	if err := setSerial(ctx, conn, "comments", maxComment); err != nil {
-		return err
-	}
-	if err := setSerial(ctx, conn, "reactions", maxReaction); err != nil {
-		return err
-	}
-
-	indexStmts := []string{
-		`CREATE UNIQUE INDEX users_username_idx ON users (username)`,
-		`CREATE UNIQUE INDEX users_email_idx ON users (email)`,
-		`CREATE INDEX posts_user_id_idx ON posts (user_id)`,
-		`CREATE INDEX posts_created_at_idx ON posts (created_at)`,
-		`CREATE INDEX comments_post_id_idx ON comments (post_id)`,
-		`CREATE INDEX comments_user_id_idx ON comments (user_id)`,
-		`ALTER TABLE reactions ADD CONSTRAINT reactions_comment_user_unique UNIQUE (comment_id, user_id)`,
-		`CREATE INDEX reactions_comment_id_idx ON reactions (comment_id)`,
-		`CREATE INDEX reactions_user_id_idx ON reactions (user_id)`,
-		`CREATE INDEX reactions_type_idx ON reactions (type)`,
-		`ANALYZE users`,
-		`ANALYZE posts`,
-		`ANALYZE comments`,
-		`ANALYZE reactions`,
-	}
-	for _, s := range indexStmts {
-		if _, err := conn.Exec(ctx, s); err != nil {
-			return fmt.Errorf("finalize: %w", err)
-		}
-	}
-	return nil
-}
-
-func setSerial(ctx context.Context, conn *pgx.Conn, table string, maxID int64) error {
-	var q string
-	if maxID < 1 {
-		q = fmt.Sprintf(`SELECT setval(pg_get_serial_sequence('%s', 'id'), 1, false)`, table)
-	} else {
-		q = fmt.Sprintf(`SELECT setval(pg_get_serial_sequence('%s', 'id'), %d, true)`, table, maxID)
-	}
-	if _, err := conn.Exec(ctx, q); err != nil {
-		return fmt.Errorf("set sequence %s: %w", table, err)
-	}
-	return nil
-}
-
 func seedUserBatch(
 	ctx context.Context,
-	conn *pgx.Conn,
+	st store,
 	cfg *config.Config,
 	rng *rand.Rand,
 	fromUser, toUser int,
@@ -210,7 +147,7 @@ func seedUserBatch(
 			now.Add(-time.Duration(rng.Intn(365*24)) * time.Hour),
 		})
 	}
-	if err := copyRows(ctx, conn, "users",
+	if err := st.Copy(ctx, "users",
 		[]string{"id", "username", "email", "full_name", "bio", "created_at"}, users); err != nil {
 		return batchStats{}, err
 	}
@@ -236,7 +173,7 @@ func seedUserBatch(
 			postID++
 		}
 	}
-	if err := copyRows(ctx, conn, "posts",
+	if err := st.Copy(ctx, "posts",
 		[]string{"id", "user_id", "title", "body", "created_at"}, posts); err != nil {
 		return batchStats{}, err
 	}
@@ -270,7 +207,7 @@ func seedUserBatch(
 			commentID++
 		}
 	}
-	if err := copyRows(ctx, conn, "comments",
+	if err := st.Copy(ctx, "comments",
 		[]string{"id", "post_id", "user_id", "body", "created_at"}, comments); err != nil {
 		return batchStats{}, err
 	}
@@ -300,7 +237,7 @@ func seedUserBatch(
 		}
 	}
 	if len(reactions) > 0 {
-		if err := copyRows(ctx, conn, "reactions",
+		if err := st.Copy(ctx, "reactions",
 			[]string{"id", "comment_id", "user_id", "type", "created_at"}, reactions); err != nil {
 			return batchStats{}, err
 		}
@@ -314,15 +251,4 @@ func seedUserBatch(
 		nextCommentID:  commentID,
 		nextReactionID: reactionID,
 	}, nil
-}
-
-func copyRows(ctx context.Context, conn *pgx.Conn, table string, columns []string, rows [][]any) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	_, err := conn.CopyFrom(ctx, pgx.Identifier{table}, columns, pgx.CopyFromRows(rows))
-	if err != nil {
-		return fmt.Errorf("copy %s: %w", table, err)
-	}
-	return nil
 }

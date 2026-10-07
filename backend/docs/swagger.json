@@ -381,9 +381,7 @@
                         "description": "OK",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -391,7 +389,7 @@
         },
         "/sync-jobs": {
             "get": {
-                "description": "Returns a paginated list of sync jobs. Default page size is 20; maximum is 100.",
+                "description": "Returns a paginated list of sync jobs. Optionally filter by connection_id (matches source or destination). Default page size is 20; maximum is 100.",
                 "produces": [
                     "application/json"
                 ],
@@ -400,6 +398,12 @@
                 ],
                 "summary": "List sync jobs",
                 "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Filter by connection ID (source or destination)",
+                        "name": "connection_id",
+                        "in": "query"
+                    },
                     {
                         "minimum": 1,
                         "type": "integer",
@@ -423,6 +427,12 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/handlers.SyncJobListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     },
                     "500": {
@@ -607,7 +617,7 @@
         },
         "/sync-jobs/{id}/explore": {
             "post": {
-                "description": "Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job.",
+                "description": "Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job. Optional filters are AND'd (with job rules on source).",
                 "consumes": [
                     "application/json"
                 ],
@@ -666,7 +676,7 @@
         },
         "/sync-jobs/{id}/explore/export": {
             "post": {
-                "description": "Downloads matching source or destination rows as CSV.",
+                "description": "Downloads matching source or destination rows as CSV. Optional filters match the explore preview. Optional fields limits CSV columns (omit for all).",
                 "consumes": [
                     "application/json"
                 ],
@@ -716,6 +726,71 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sync-jobs/{id}/explore/suggest": {
+            "post": {
+                "description": "Uses an OpenAI-compatible model to turn a natural-language request into explore filters and visible columns. Requires OPENAI_API_KEY.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync-jobs"
+                ],
+                "summary": "AI suggest explore filters and fields",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sync job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Prompt and available field names",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ExploreSuggestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/llm.ExploreSuggestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -1005,6 +1080,12 @@
         "handlers.ColumnInfo": {
             "type": "object",
             "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.ColumnInfo"
+                    }
+                },
                 "name": {
                     "type": "string"
                 },
@@ -1027,6 +1108,19 @@
                 "side"
             ],
             "properties": {
+                "fields": {
+                    "description": "omit = all columns; empty = none",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sync.FilterInput"
+                    }
+                },
                 "side": {
                     "type": "string",
                     "example": "source"
@@ -1039,6 +1133,12 @@
                 "side"
             ],
             "properties": {
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sync.FilterInput"
+                    }
+                },
                 "page": {
                     "type": "integer",
                     "example": 1
@@ -1058,6 +1158,42 @@
                 "sort_dir": {
                     "type": "string",
                     "example": "asc"
+                }
+            }
+        },
+        "handlers.ExploreSuggestRequest": {
+            "type": "object",
+            "required": [
+                "prompt"
+            ],
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "id",
+                        "name",
+                        "email",
+                        "status"
+                    ]
+                },
+                "filter_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "id",
+                        "name",
+                        "status",
+                        "email"
+                    ]
+                },
+                "prompt": {
+                    "type": "string",
+                    "example": "active users named john; show id name email"
                 }
             }
         },
@@ -1112,6 +1248,37 @@
                 "total_pages": {
                     "type": "integer",
                     "example": 5
+                }
+            }
+        },
+        "llm.ExploreSuggestResult": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/llm.Filter"
+                    }
+                }
+            }
+        },
+        "llm.Filter": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
                 }
             }
         },
@@ -1232,6 +1399,35 @@
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncJobFieldValue"
+                    }
+                }
+            }
+        },
+        "models.SyncJobFieldValue": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "destination_value": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "source_value": {
+                    "type": "string"
+                },
+                "sync_job_field_id": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -1262,11 +1458,14 @@
                 "name": {
                     "type": "string"
                 },
-                "parent_id": {
-                    "type": "integer"
-                },
                 "related_key": {
                     "type": "string"
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SyncJobRelation"
+                    }
                 },
                 "sync_job_id": {
                     "type": "integer"
@@ -1343,6 +1542,20 @@
                 },
                 "sync_job_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "sync.FilterInput": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
                 }
             }
         },
@@ -1457,11 +1670,38 @@
                 "id": {
                     "type": "integer"
                 },
+                "relation": {
+                    "type": "string"
+                },
                 "source_name": {
                     "type": "string"
                 },
                 "sync_job_relation_id": {
                     "type": "integer"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.FieldValueInput"
+                    }
+                }
+            }
+        },
+        "syncjob.FieldValueInput": {
+            "type": "object",
+            "required": [
+                "destination_value",
+                "source_value"
+            ],
+            "properties": {
+                "destination_value": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "source_value": {
+                    "type": "string"
                 }
             }
         },
@@ -1479,6 +1719,12 @@
                 "config": {
                     "type": "object"
                 },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.FieldInput"
+                    }
+                },
                 "foreign_key": {
                     "type": "string"
                 },
@@ -1488,11 +1734,14 @@
                 "name": {
                     "type": "string"
                 },
-                "parent_id": {
-                    "type": "integer"
-                },
                 "related_key": {
                     "type": "string"
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/syncjob.RelationInput"
+                    }
                 },
                 "table": {
                     "type": "string"

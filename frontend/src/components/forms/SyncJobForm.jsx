@@ -4,10 +4,13 @@ import { ruleNeedsValue } from '../../lib/ruleOperators'
 import { columnNames, fieldsFromSourceColumns } from '../../lib/sourceColumns'
 import useConnectionSchema from '../../hooks/useConnectionSchema'
 import AutocompleteInput from '../AutocompleteInput'
-import { Field, PrimaryButton, inputClassName } from '../ui'
+import { Field, IconButton, PrimaryButton, Toggle, inputClassName } from '../ui'
 import FieldEditor from './FieldEditor'
 import RelationEditor from './RelationEditor'
 import RuleEditor from './RuleEditor'
+
+const DEFAULT_CHUNK_SIZE = 500
+const DEFAULT_WORKERS = 2
 
 function toArrayCsv(value) {
   if (Array.isArray(value)) return value.join(', ')
@@ -24,12 +27,99 @@ function fromCsv(value) {
 
 function buildInitialConfig(config) {
   const parsed = parseConfig(config)
+  const pk = normalizePrimaryKey(parsed.primary_key, parsed.primary_key_int)
   return {
+    primary_key_source: pk.source,
+    primary_key_destination: pk.destination,
+    primary_key_int_enabled: pk.intEnabled,
+    primary_key_int: pk.intField,
     default_sorting_field: parsed.default_sorting_field || '',
     enable_nested_fields:
       parsed.enable_nested_fields === undefined ? true : Boolean(parsed.enable_nested_fields),
     symbols_to_index: toArrayCsv(parsed.symbols_to_index),
     token_separators: toArrayCsv(parsed.token_separators),
+    apply_schema: Boolean(parsed.apply_schema),
+  }
+}
+
+/** Normalize stored primary_key (string | array | object) + legacy primary_key_int into form state. */
+function normalizePrimaryKey(primaryKey, legacyInt) {
+  const legacy = typeof legacyInt === 'string' ? legacyInt.trim() : ''
+  if (primaryKey == null || primaryKey === '') {
+    return {
+      source: '',
+      destination: '',
+      intEnabled: true,
+      intField: legacy || 'id_int',
+    }
+  }
+  if (typeof primaryKey === 'string') {
+    return {
+      source: primaryKey,
+      destination: '',
+      intEnabled: legacy ? true : false,
+      intField: legacy || 'id_int',
+    }
+  }
+  if (Array.isArray(primaryKey)) {
+    return {
+      source: primaryKey.filter(Boolean).join(', '),
+      destination: '',
+      intEnabled: legacy ? true : false,
+      intField: legacy || 'id_int',
+    }
+  }
+  if (typeof primaryKey === 'object') {
+    const source = Array.isArray(primaryKey.source)
+      ? primaryKey.source.filter(Boolean).join(', ')
+      : primaryKey.source || ''
+    const hasIntKey = primaryKey.int !== undefined && primaryKey.int !== null
+    const intVal = hasIntKey ? String(primaryKey.int).trim() : legacy
+    return {
+      source,
+      destination: primaryKey.destination || '',
+      intEnabled: hasIntKey ? Boolean(intVal) : Boolean(legacy),
+      intField: intVal || 'id_int',
+    }
+  }
+  return { source: '', destination: '', intEnabled: true, intField: 'id_int' }
+}
+
+function buildPrimaryKeyPayload(config, destinationType) {
+  const source = fromCsv(config.primary_key_source)
+  const destination = config.primary_key_destination.trim()
+  const supportsInt = destinationType === 'typesense' || destinationType === 'mongodb'
+  const intEnabled = supportsInt && config.primary_key_int_enabled
+  const intField = config.primary_key_int.trim() || 'id_int'
+
+  const hasSource = source.length > 0
+  const hasDest = Boolean(destination && destination !== 'id')
+  const intDefaultOn = intEnabled && intField === 'id_int'
+  const intOff = supportsInt && !config.primary_key_int_enabled
+  const intCustom = intEnabled && intField !== 'id_int'
+
+  // Defaults match backend (id + id_int) — omit config entirely.
+  if (!hasSource && !hasDest && (!supportsInt || intDefaultOn)) {
+    return null
+  }
+
+  const payload = {}
+  if (source.length === 1) payload.source = source[0]
+  else if (source.length > 1) payload.source = source
+  if (hasDest) payload.destination = destination
+  if (intEnabled) payload.int = intField
+  // intOff with empty payload {} still marks primary_key configured (no companion).
+  if (!hasSource && !hasDest && !intOff && !intCustom) {
+    return null
+  }
+  return payload
+}
+
+function mapFieldValue(v) {
+  return {
+    id: v.id,
+    source_value: v.source_value || '',
+    destination_value: v.destination_value || '',
   }
 }
 
@@ -40,7 +130,18 @@ function mapField(f) {
     destination_name: f.destination_name || '',
     destination_type: f.destination_type || '',
     active: f.active !== false,
+    values: (f.values || []).map(mapFieldValue),
   }
+}
+
+function fieldValuesPayload(values = []) {
+  return values
+    .filter((v) => String(v.source_value ?? '').trim() && String(v.destination_value ?? '').trim())
+    .map((v) => ({
+      id: v.id && v.id > 0 ? v.id : undefined,
+      source_value: String(v.source_value).trim(),
+      destination_value: String(v.destination_value).trim(),
+    }))
 }
 
 function mapRule(r) {
@@ -56,6 +157,144 @@ function mapRule(r) {
 function pivotFromConfig(config) {
   const parsed = parseConfig(config)
   return parsed.pivot_table || ''
+}
+
+function mapRelation(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    type: r.type || 'has_many',
+    table: r.table || '',
+    pivot_table: pivotFromConfig(r.config),
+    foreign_key: r.foreign_key || '',
+    related_key: r.related_key || '',
+    active: r.active !== false,
+    fields: (r.fields || []).map(mapField),
+    relations: (r.relations || []).map(mapRelation),
+  }
+}
+
+function fieldPayload(f) {
+  return {
+    id: f.id && f.id > 0 ? f.id : undefined,
+    source_name: f.source_name.trim(),
+    destination_name: f.destination_name?.trim() || undefined,
+    destination_type: f.destination_type || undefined,
+    active: f.active !== false,
+    values: fieldValuesPayload(f.values),
+  }
+}
+
+function relationPayload(r) {
+  const out = {
+    name: r.name.trim(),
+    type: r.type,
+    table: r.table.trim(),
+    foreign_key: r.foreign_key?.trim() || undefined,
+    related_key: r.related_key?.trim() || undefined,
+    active: r.active !== false,
+  }
+  // Only real DB ids — UI temp ids are negative and rejected by the API.
+  if (r.id && r.id > 0) {
+    out.id = r.id
+  }
+  if (r.type === 'belongs_to_many' && r.pivot_table?.trim()) {
+    out.config = { pivot_table: r.pivot_table.trim() }
+  }
+  const fields = (r.fields || []).filter((f) => f.source_name.trim()).map(fieldPayload)
+  if (fields.length) {
+    out.fields = fields
+  }
+  const kids = (r.relations || [])
+    .filter((child) => child.name.trim() && child.table.trim())
+    .map(relationPayload)
+  if (kids.length) {
+    out.relations = kids
+  }
+  return out
+}
+
+function keepRelations(relations) {
+  return relations
+    .filter((r) => r.name.trim() && r.table.trim())
+    .map((r) => ({
+      ...r,
+      relations: keepRelations(r.relations || []),
+    }))
+}
+
+function ChevronToggleIcon({ open }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className={`transition-transform ${open ? 'rotate-180' : ''}`}
+    >
+      <path
+        d="M6 9l6 6 6-6"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function ButtonPanel({ title, description, open, onToggle, children, className = '' }) {
+  return (
+    <div
+      className={[
+        'rounded-lg border border-[var(--border)] bg-[var(--surface)]/60 p-4',
+        className,
+      ].join(' ')}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h4 className="text-sm font-semibold text-[var(--text)]">{title}</h4>
+          {description ? (
+            <p className="text-xs text-[var(--text-muted)]">{description}</p>
+          ) : null}
+        </div>
+        <IconButton
+          label={open ? `Hide ${title}` : `Show ${title}`}
+          onClick={() => onToggle(!open)}
+        >
+          <ChevronToggleIcon open={open} />
+        </IconButton>
+      </div>
+      {open ? <div className="mt-4 border-t border-[var(--border)] pt-4">{children}</div> : null}
+    </div>
+  )
+}
+
+function AdvancedSettings({ open, onToggle, summary, children }) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-[var(--text)]">Advanced settings</h3>
+          <p className="text-xs text-[var(--text-muted)]">
+            {open
+              ? 'Destination config, filters, field overrides, and relations.'
+              : summary || 'Destination config, filters, field overrides, and relations.'}
+          </p>
+        </div>
+        <IconButton
+          label={open ? 'Hide advanced settings' : 'Show advanced settings'}
+          onClick={() => onToggle(!open)}
+        >
+          <ChevronToggleIcon open={open} />
+        </IconButton>
+      </div>
+      {open ? (
+        <div className="mt-4 space-y-3 border-t border-[var(--border)] pt-4">{children}</div>
+      ) : null}
+    </div>
+  )
 }
 
 export default function SyncJobForm({
@@ -74,37 +313,64 @@ export default function SyncJobForm({
   )
   const [sourceTable, setSourceTable] = useState(initial?.source_table || '')
   const [destinationTable, setDestinationTable] = useState(initial?.destination_table || '')
-  const [chunkSize, setChunkSize] = useState(initial?.chunk_size ?? 500)
-  const [workers, setWorkers] = useState(initial?.workers ?? 2)
+  const [chunkSize, setChunkSize] = useState(initial?.chunk_size ?? DEFAULT_CHUNK_SIZE)
+  const [workers, setWorkers] = useState(initial?.workers ?? DEFAULT_WORKERS)
   const [config, setConfig] = useState(() => buildInitialConfig(initial?.config))
   const [fields, setFields] = useState(() => (initial?.fields || []).map(mapField))
   const [rules, setRules] = useState(() => (initial?.rules || []).map(mapRule))
   const [relations, setRelations] = useState(() =>
-    (initial?.relations || []).map((r) => ({
-      id: r.id,
-      name: r.name || '',
-      type: r.type || 'has_many',
-      table: r.table || '',
-      pivot_table: pivotFromConfig(r.config),
-      foreign_key: r.foreign_key || '',
-      related_key: r.related_key || '',
-      parent_id: r.parent_id ?? '',
-      active: r.active !== false,
-      fields: (r.fields || []).map(mapField),
-    })),
+    (initial?.relations || []).map(mapRelation),
   )
+
+  const initialConfig = parseConfig(initial?.config)
+  const [showAdvanced, setShowAdvanced] = useState(
+    () =>
+      (initial?.rules || []).length > 0 ||
+      (initial?.fields || []).length > 0 ||
+      (initial?.relations || []).length > 0 ||
+      Boolean(initialConfig.primary_key_source) ||
+      Boolean(initialConfig.primary_key_destination) ||
+      (initialConfig.primary_key_int_enabled &&
+        initialConfig.primary_key_int &&
+        initialConfig.primary_key_int !== 'id_int') ||
+      Boolean(initialConfig.default_sorting_field) ||
+      Boolean(initialConfig.apply_schema) ||
+      (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length > 0) ||
+      (Array.isArray(initialConfig.token_separators) && initialConfig.token_separators.length > 0),
+  )
+  const [showDestConfig, setShowDestConfig] = useState(
+    () =>
+      Boolean(initialConfig.primary_key_source) ||
+      Boolean(initialConfig.primary_key_destination) ||
+      (initialConfig.primary_key_int_enabled &&
+        initialConfig.primary_key_int &&
+        initialConfig.primary_key_int !== 'id_int') ||
+      Boolean(initialConfig.default_sorting_field) ||
+      Boolean(initialConfig.apply_schema) ||
+      (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length > 0) ||
+      (Array.isArray(initialConfig.token_separators) && initialConfig.token_separators.length > 0) ||
+      initialConfig.enable_nested_fields === false,
+  )
+  const [showRules, setShowRules] = useState(() => (initial?.rules || []).length > 0)
+  const [showFields, setShowFields] = useState(() => (initial?.fields || []).length > 0)
+  const [showRelations, setShowRelations] = useState(() => (initial?.relations || []).length > 0)
+  const [showTypesenseAdvanced, setShowTypesenseAdvanced] = useState(() => {
+    return Boolean(
+      (Array.isArray(initialConfig.symbols_to_index) && initialConfig.symbols_to_index.length) ||
+        (typeof initialConfig.symbols_to_index === 'string' &&
+          initialConfig.symbols_to_index.trim()) ||
+        (Array.isArray(initialConfig.token_separators) &&
+          initialConfig.token_separators.length) ||
+        (typeof initialConfig.token_separators === 'string' &&
+          initialConfig.token_separators.trim()),
+    )
+  })
 
   const { tables, columnsByTable, ensureTables, ensureColumns } =
     useConnectionSchema(sourceConnectionId)
 
-  const sourceConnections = useMemo(
-    () => connections.filter((c) => c.type === 'mysql' || c.type === 'postgres'),
-    [connections],
-  )
-  const destinationConnections = useMemo(
-    () => connections.filter((c) => c.type === 'typesense'),
-    [connections],
-  )
+  const sourceConnections = connections
+  const destinationConnections = connections
 
   const destinationType = useMemo(() => {
     const selected = connections.find((c) => String(c.id) === String(destinationConnectionId))
@@ -113,6 +379,20 @@ export default function SyncJobForm({
 
   const sourceColumns = columnsByTable[sourceTable.trim()] || []
   const sourceColumnNames = columnNames(sourceColumns)
+
+  const mappingSummary = useMemo(() => {
+    const parts = []
+    const ruleCount = rules.filter((r) => r.field.trim()).length
+    const fieldCount = fields.filter((f) => f.source_name.trim()).length
+    const relationCount = relations.filter((r) => r.name.trim() && r.table.trim()).length
+    if (destinationType) {
+      parts.push('destination config')
+    }
+    if (ruleCount) parts.push(`${ruleCount} rule${ruleCount === 1 ? '' : 's'}`)
+    if (fieldCount) parts.push(`${fieldCount} field${fieldCount === 1 ? '' : 's'}`)
+    if (relationCount) parts.push(`${relationCount} relation${relationCount === 1 ? '' : 's'}`)
+    return parts.length ? parts.join(', ') : ''
+  }, [rules, fields, relations, destinationType])
 
   async function autofillFields() {
     const columns = await ensureColumns(sourceTable)
@@ -124,61 +404,32 @@ export default function SyncJobForm({
     event.preventDefault()
 
     const payloadConfig = {}
+    const primaryKey = buildPrimaryKeyPayload(config, destinationType)
+    if (primaryKey) {
+      payloadConfig.primary_key = primaryKey
+    }
     if (destinationType === 'typesense') {
       if (config.default_sorting_field.trim()) {
         payloadConfig.default_sorting_field = config.default_sorting_field.trim()
       }
       payloadConfig.enable_nested_fields = config.enable_nested_fields
-      const symbols = fromCsv(config.symbols_to_index)
-      const tokens = fromCsv(config.token_separators)
-      if (symbols.length) payloadConfig.symbols_to_index = symbols
-      if (tokens.length) payloadConfig.token_separators = tokens
+      if (showTypesenseAdvanced) {
+        const symbols = fromCsv(config.symbols_to_index)
+        const tokens = fromCsv(config.token_separators)
+        if (symbols.length) payloadConfig.symbols_to_index = symbols
+        if (tokens.length) payloadConfig.token_separators = tokens
+      }
+    }
+    if (destinationType === 'mongodb') {
+      payloadConfig.apply_schema = Boolean(config.apply_schema)
     }
 
-    const keptRelations = relations.filter((r) => r.name.trim() && r.table.trim())
+    const keptRelations = keepRelations(relations)
+    const relationPayloadList = keptRelations.map(relationPayload)
 
-    const relationPayload = keptRelations.map((r) => {
-      const out = {
-        id: r.id,
-        name: r.name.trim(),
-        type: r.type,
-        table: r.table.trim(),
-        foreign_key: r.foreign_key?.trim() || undefined,
-        related_key: r.related_key?.trim() || undefined,
-        active: r.active !== false,
-      }
-      if (r.parent_id !== '' && r.parent_id != null) {
-        out.parent_id = Number(r.parent_id)
-      }
-      if (r.type === 'belongs_to_many' && r.pivot_table?.trim()) {
-        out.config = { pivot_table: r.pivot_table.trim() }
-      }
-      return out
-    })
-
-    const fieldPayload = [
-      ...fields
-        .filter((f) => f.source_name.trim())
-        .map((f) => ({
-          id: f.id && f.id > 0 ? f.id : undefined,
-          source_name: f.source_name.trim(),
-          destination_name: f.destination_name?.trim() || undefined,
-          destination_type: f.destination_type || undefined,
-          active: f.active !== false,
-        })),
-      ...keptRelations.flatMap((r) =>
-        (r.fields || [])
-          .filter((f) => f.source_name.trim())
-          .map((f) => ({
-            id: f.id && f.id > 0 ? f.id : undefined,
-            sync_job_relation_id: r.id,
-            source_name: f.source_name.trim(),
-            destination_name: f.destination_name?.trim() || undefined,
-            destination_type: f.destination_type || undefined,
-            active: f.active !== false,
-          })),
-      ),
-    ]
+    const fieldPayloadList = fields
+      .filter((f) => f.source_name.trim())
+      .map(fieldPayload)
 
     const rulePayload = rules
       .filter((r) => r.field.trim())
@@ -196,12 +447,12 @@ export default function SyncJobForm({
       source_table: sourceTable.trim(),
       destination_connection_id: Number(destinationConnectionId),
       destination_table: destinationTable.trim(),
-      chunk_size: Number(chunkSize) || 500,
-      workers: Number(workers) || 2,
+      chunk_size: Number(chunkSize) || DEFAULT_CHUNK_SIZE,
+      workers: Number(workers) || DEFAULT_WORKERS,
       config: payloadConfig,
-      fields: fieldPayload,
+      fields: fieldPayloadList,
       rules: rulePayload,
-      relations: relationPayload,
+      relations: relationPayloadList,
     }
 
     onSubmit(payload)
@@ -298,99 +549,203 @@ export default function SyncJobForm({
         </div>
       </div>
 
-      {destinationType === 'typesense' ? (
-        <details className="group rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 open:pb-4">
-          <summary className="flex cursor-pointer list-none items-center gap-2 p-4 [&::-webkit-details-marker]:hidden">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent)] font-mono text-[10px] font-bold text-white">
-              02
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold text-[var(--text)]">Destination config</h3>
-              <p className="text-xs text-[var(--text-muted)]">
-                Optional Typesense options — expand only if you need them.
-              </p>
+      <AdvancedSettings
+        open={showAdvanced}
+        onToggle={setShowAdvanced}
+        summary={mappingSummary}
+      >
+        {destinationType ? (
+          <ButtonPanel
+            title="Destination config"
+            description="Optional options for the destination write."
+            open={showDestConfig}
+            onToggle={setShowDestConfig}
+          >
+            <div className="space-y-4">
+              <div
+                className={`grid gap-4 ${
+                  destinationType === 'typesense' || destinationType === 'mongodb'
+                    ? 'sm:grid-cols-3'
+                    : 'sm:grid-cols-2'
+                }`}
+              >
+                <Field
+                  label="Primary key (source)"
+                  hint="Comma-separated → joined with _ (default: id)"
+                >
+                  <AutocompleteInput
+                    options={sourceColumnNames}
+                    value={config.primary_key_source}
+                    placeholder="id"
+                    onFocus={() => ensureColumns(sourceTable)}
+                    onChange={(e) =>
+                      setConfig((prev) => ({ ...prev, primary_key_source: e.target.value }))
+                    }
+                  />
+                </Field>
+                <Field
+                  label="Primary key (destination)"
+                  hint="Joined key field (default: id)"
+                >
+                  <input
+                    className={inputClassName}
+                    value={config.primary_key_destination}
+                    placeholder="id"
+                    onChange={(e) =>
+                      setConfig((prev) => ({ ...prev, primary_key_destination: e.target.value }))
+                    }
+                  />
+                </Field>
+                {destinationType === 'typesense' || destinationType === 'mongodb' ? (
+                  <Field
+                    label="Integer companion"
+                    hint="Numeric copy for sorting (optional)"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Toggle
+                        checked={config.primary_key_int_enabled}
+                        onChange={(on) =>
+                          setConfig((prev) => ({ ...prev, primary_key_int_enabled: on }))
+                        }
+                        aria-label="Enable integer companion field"
+                        className="shrink-0"
+                      />
+                      <input
+                        className={inputClassName}
+                        value={config.primary_key_int}
+                        placeholder="id_int"
+                        disabled={!config.primary_key_int_enabled}
+                        onChange={(e) =>
+                          setConfig((prev) => ({ ...prev, primary_key_int: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </Field>
+                ) : null}
+              </div>
+
+              {destinationType === 'typesense' ? (
+                <>
+                  <Field
+                    label="Default sorting field"
+                    hint="int32/float/int64 — id uses integer companion when enabled"
+                  >
+                    <AutocompleteInput
+                      options={sourceColumnNames}
+                      value={config.default_sorting_field}
+                      onFocus={() => ensureColumns(sourceTable)}
+                      onChange={(e) =>
+                        setConfig((prev) => ({ ...prev, default_sorting_field: e.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Toggle
+                    checked={config.enable_nested_fields}
+                    onChange={(on) => setConfig((prev) => ({ ...prev, enable_nested_fields: on }))}
+                    label="Enable nested fields"
+                    description="Keep nested objects and arrays in the Typesense schema."
+                  />
+                  <Toggle
+                    checked={showTypesenseAdvanced}
+                    onChange={(on) => {
+                      setShowTypesenseAdvanced(on)
+                      if (!on) {
+                        setConfig((prev) => ({
+                          ...prev,
+                          symbols_to_index: '',
+                          token_separators: '',
+                        }))
+                      }
+                    }}
+                    label="Custom indexing symbols"
+                    description="Override symbols to index and token separators."
+                  />
+                  {showTypesenseAdvanced ? (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Symbols to index" hint="Comma-separated">
+                        <input
+                          className={inputClassName}
+                          value={config.symbols_to_index}
+                          onChange={(e) =>
+                            setConfig((prev) => ({ ...prev, symbols_to_index: e.target.value }))
+                          }
+                        />
+                      </Field>
+                      <Field label="Token separators" hint="Comma-separated">
+                        <input
+                          className={inputClassName}
+                          value={config.token_separators}
+                          onChange={(e) =>
+                            setConfig((prev) => ({ ...prev, token_separators: e.target.value }))
+                          }
+                        />
+                      </Field>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              {destinationType === 'mongodb' ? (
+                <Toggle
+                  checked={config.apply_schema}
+                  onChange={(on) => setConfig((prev) => ({ ...prev, apply_schema: on }))}
+                  label="Apply schema"
+                  description="Create a JSON Schema validator on the destination collection from the mapped fields."
+                />
+              ) : null}
             </div>
-            <span className="font-mono text-[11px] text-[var(--text-muted)] group-open:hidden">
-              show
-            </span>
-            <span className="hidden font-mono text-[11px] text-[var(--text-muted)] group-open:inline">
-              hide
-            </span>
-          </summary>
-          <div className="grid gap-4 border-t border-[var(--border)] px-4 pt-4 sm:grid-cols-2">
-            <Field label="Default sorting field">
-              <AutocompleteInput
-                options={sourceColumnNames}
-                value={config.default_sorting_field}
-                onFocus={() => ensureColumns(sourceTable)}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, default_sorting_field: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Symbols to index" hint="Comma-separated">
-              <input
-                className={inputClassName}
-                value={config.symbols_to_index}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, symbols_to_index: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Token separators" hint="Comma-separated">
-              <input
-                className={inputClassName}
-                value={config.token_separators}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, token_separators: e.target.value }))
-                }
-              />
-            </Field>
-            <label className="flex items-center gap-2 pt-7 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-[var(--accent)]"
-                checked={config.enable_nested_fields}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, enable_nested_fields: e.target.checked }))
-                }
-              />
-              Enable nested fields
-            </label>
-          </div>
-        </details>
-      ) : null}
+          </ButtonPanel>
+        ) : null}
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <RuleEditor
-          rules={rules}
-          onChange={setRules}
-          sourceColumns={sourceColumnNames}
-          onNeedSourceColumns={() => ensureColumns(sourceTable)}
-        />
-      </div>
+        <ButtonPanel
+          title="Filter rules"
+          description="Only import rows that match all active rules."
+          open={showRules}
+          onToggle={setShowRules}
+        >
+          <RuleEditor
+            rules={rules}
+            onChange={setRules}
+            sourceColumns={sourceColumnNames}
+            onNeedSourceColumns={() => ensureColumns(sourceTable)}
+            hideHeader
+          />
+        </ButtonPanel>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <FieldEditor
-          fields={fields}
-          onChange={setFields}
-          sourceColumns={sourceColumns}
-          onNeedSourceColumns={() => ensureColumns(sourceTable)}
-          onAutofill={sourceTable.trim() ? autofillFields : undefined}
-        />
-      </div>
+        <ButtonPanel
+          title="Field overrides"
+          description="Rename columns, set types, map values, or exclude fields."
+          open={showFields}
+          onToggle={setShowFields}
+        >
+          <FieldEditor
+            fields={fields}
+            onChange={setFields}
+            sourceColumns={sourceColumns}
+            onNeedSourceColumns={() => ensureColumns(sourceTable)}
+            onAutofill={sourceTable.trim() ? autofillFields : undefined}
+            hideHeader
+          />
+        </ButtonPanel>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/70 p-4">
-        <RelationEditor
-          relations={relations}
-          onChange={setRelations}
-          tables={tables}
-          columnsByTable={columnsByTable}
-          sourceTable={sourceTable}
-          onNeedTables={ensureTables}
-          onNeedColumns={ensureColumns}
-        />
-      </div>
+        <ButtonPanel
+          title="Relations"
+          description="Nest related rows on the destination document."
+          open={showRelations}
+          onToggle={setShowRelations}
+        >
+          <RelationEditor
+            relations={relations}
+            onChange={setRelations}
+            tables={tables}
+            columnsByTable={columnsByTable}
+            sourceTable={sourceTable}
+            onNeedTables={ensureTables}
+            onNeedColumns={ensureColumns}
+            hideHeader
+          />
+        </ButtonPanel>
+      </AdvancedSettings>
 
       <div className="flex justify-end border-t border-[var(--border)] pt-5">
         <PrimaryButton type="submit" disabled={busy}>

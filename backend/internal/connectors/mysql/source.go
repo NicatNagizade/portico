@@ -9,7 +9,6 @@ import (
 	"github.com/portico/backend/internal/connectors"
 	"github.com/portico/backend/internal/connectors/sqlutil"
 	"github.com/portico/backend/internal/models"
-	mysqlDriver "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -27,20 +26,15 @@ type Source struct {
 }
 
 func NewSource(conn *models.Connection) (connectors.SourceReader, error) {
-	var cfg Config
-	if err := json.Unmarshal(conn.Config, &cfg); err != nil {
-		return nil, fmt.Errorf("parse mysql config: %w", err)
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 3306
+	cfg, err := ParseConfig(json.RawMessage(conn.Config))
+	if err != nil {
+		return nil, err
 	}
 	return &Source{cfg: cfg}, nil
 }
 
 func (s *Source) Open(ctx context.Context) error {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4",
-		s.cfg.User, s.cfg.Password, s.cfg.Host, s.cfg.Port, s.cfg.Database)
-	db, err := sqlutil.Open(ctx, mysqlDriver.Open(dsn))
+	db, err := openDB(ctx, s.cfg)
 	if err != nil {
 		return err
 	}
@@ -95,16 +89,18 @@ func (s *Source) table(table string) *gorm.DB {
 }
 
 func (s *Source) Count(ctx context.Context, table string, filters []connectors.Filter) (int64, error) {
-	return sqlutil.Count(ctx, s.table(table), filters, quoteIdent)
+	return sqlutil.Count(ctx, s.table(table), filters, quoteIdent, nil)
 }
 
 func (s *Source) ReadChunks(ctx context.Context, table string, chunkSize int, filters []connectors.Filter, fn func([]map[string]any) error) error {
-	return sqlutil.ReadFilteredChunks(ctx, s.table(table), chunkSize, filters, quoteIdent, fn)
+	return sqlutil.ReadFilteredChunks(ctx, s.table(table), chunkSize, filters, quoteIdent, nil, fn)
 }
 
 func (s *Source) Query(ctx context.Context, table string, columns []string, filters []connectors.Filter, limit, offset int, order *connectors.Order) ([]map[string]any, error) {
-	return sqlutil.QueryPage(ctx, s.table(table), columns, filters, quoteIdent, limit, offset, order)
+	return sqlutil.QueryPage(ctx, s.table(table), columns, filters, quoteIdent, nil, limit, offset, order)
 }
+
+func (s *Source) SupportsRelationFilters() bool { return true }
 
 func (s *Source) QueryRows(ctx context.Context, table string, columns []string, whereColumn string, whereValues []any) ([]map[string]any, error) {
 	return sqlutil.QueryRows(ctx, s.table(table), columns, whereColumn, whereValues, quoteIdent)
@@ -126,5 +122,5 @@ func mapMySQLType(dataType string) connectors.FieldType {
 }
 
 func quoteIdent(name string) string {
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	return sqlutil.QuoteIdent(name, "`")
 }

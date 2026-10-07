@@ -181,6 +181,151 @@ export function Field({ label, children, hint }) {
   )
 }
 
+export function Toggle({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+  className = '',
+  'aria-label': ariaLabel,
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel || (typeof label === 'string' ? label : undefined)}
+      disabled={disabled}
+      onClick={() => onChange?.(!checked)}
+      className={[
+        'flex items-start gap-3 text-left',
+        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+        className,
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+          checked ? 'bg-[var(--accent)]' : 'bg-[var(--border-strong)]',
+        ].join(' ')}
+      >
+        <span
+          className={[
+            'inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+            checked ? 'translate-x-4' : 'translate-x-0.5',
+          ].join(' ')}
+        />
+      </span>
+      <ControlCopy label={label} description={description} />
+    </button>
+  )
+}
+
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+  className = '',
+  'aria-label': ariaLabel,
+}) {
+  const labelText = typeof label === 'string' ? label : undefined
+  return (
+    <label
+      className={[
+        'flex items-start gap-2.5',
+        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+        className,
+      ].join(' ')}
+    >
+      <input
+        type="checkbox"
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--border-strong)] text-[var(--accent)] accent-[var(--accent)]"
+        checked={checked}
+        disabled={disabled}
+        aria-label={ariaLabel || labelText}
+        onChange={(e) => onChange?.(e.target.checked)}
+      />
+      <ControlCopy label={label} description={description} />
+    </label>
+  )
+}
+
+function ControlCopy({ label, description }) {
+  if (!label && !description) return null
+  return (
+    <span className="min-w-0 flex-1">
+      {label ? (
+        typeof label === 'string' ? (
+          <span className="block text-sm font-medium text-[var(--text)]">{label}</span>
+        ) : (
+          label
+        )
+      ) : null}
+      {description ? (
+        <span className="mt-0.5 block text-xs text-[var(--text-muted)]">{description}</span>
+      ) : null}
+    </span>
+  )
+}
+
+/** Modal shell used by explore filters/fields and row detail. */
+export function Dialog({
+  open,
+  title,
+  description,
+  onClose,
+  children,
+  footer,
+  size = 'md',
+  'aria-label': ariaLabel,
+}) {
+  if (!open) return null
+
+  const maxWidth =
+    size === 'lg' ? 'max-w-2xl' : size === 'sm' ? 'max-w-md' : 'max-w-xl'
+
+  return (
+    <div
+      className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-[#12181f]/45 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel || title}
+        className={[
+          'animate-dialog-in flex max-h-[min(90vh,720px)] w-full flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lg)]',
+          maxWidth,
+        ].join(' ')}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+          <div className="min-w-0">
+            {title ? (
+              <h2 className="text-lg font-semibold tracking-tight text-[var(--text)]">{title}</h2>
+            ) : null}
+            {description ? (
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{description}</p>
+            ) : null}
+          </div>
+          <GhostButton type="button" onClick={onClose}>
+            Close
+          </GhostButton>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer ? (
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-3">
+            {footer}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 export function Panel({ title, description, children, className = '', actions }) {
   return (
     <section
@@ -209,8 +354,10 @@ export function TypeChip({ type }) {
   const styles = {
     mysql: { bg: 'var(--mysql-soft)', color: 'var(--mysql)' },
     postgres: { bg: 'var(--postgres-soft)', color: 'var(--postgres)' },
+    sqlite: { bg: 'var(--sqlite-soft)', color: 'var(--sqlite)' },
     typesense: { bg: 'var(--typesense-soft)', color: 'var(--typesense)' },
     mongodb: { bg: 'var(--mongodb-soft)', color: 'var(--mongodb)' },
+    redis: { bg: 'var(--redis-soft)', color: 'var(--redis)' },
   }
   const style = styles[type] || {
     bg: 'var(--accent-soft)',
@@ -237,6 +384,10 @@ export function MetaChip({ children }) {
 
 export const inputClassName =
   'w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] shadow-[var(--shadow-sm)] outline-none transition-shadow placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-soft)]'
+
+/** Compact inputs for dense editor tables (fields, rules, filters, relations). */
+export const compactInputClassName =
+  'w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]/70 focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-soft)]'
 
 export const tableClassName = 'w-full min-w-[720px] border-collapse text-left text-sm'
 
@@ -270,39 +421,145 @@ export function Td({ children, className = '' }) {
   )
 }
 
-export function Pagination({ page, totalPages, total, pageSize, onPageChange, disabled }) {
+/** Build a compact page list with ellipses, e.g. [1, '…', 4, 5, 6, '…', 20]. */
+export function pageList(current, total) {
+  if (total <= 0) return []
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+
+  const set = new Set([1, total, current])
+  for (let d = 1; d <= 1; d++) {
+    set.add(current - d)
+    set.add(current + d)
+  }
+  if (current <= 3) {
+    set.add(2)
+    set.add(3)
+    set.add(4)
+  }
+  if (current >= total - 2) {
+    set.add(total - 1)
+    set.add(total - 2)
+    set.add(total - 3)
+  }
+
+  const sorted = [...set].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b)
+  const items = []
+  let prev = 0
+  for (const p of sorted) {
+    if (prev && p - prev > 1) items.push('…')
+    items.push(p)
+    prev = p
+  }
+  return items
+}
+
+function PaginationNavButton({ label, disabled, onClick, children }) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs font-medium text-[var(--text)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)] disabled:pointer-events-none disabled:opacity-40"
+    >
+      {children}
+    </button>
+  )
+}
+
+export function Pagination({
+  page,
+  totalPages,
+  total,
+  pageSize,
+  onPageChange,
+  pageSizeOptions,
+  onPageSizeChange,
+  disabled,
+}) {
   if (!total) return null
   const from = (page - 1) * pageSize + 1
   const to = Math.min(page * pageSize, total)
+  const pages = Math.max(totalPages, 1)
   const canPrev = page > 1
-  const canNext = page < totalPages
+  const canNext = page < pages
+  const showNav = pages > 1
+  const sizes = Array.isArray(pageSizeOptions) && pageSizeOptions.length > 0 ? pageSizeOptions : null
 
   return (
     <div className="flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--bg-elevated)]/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-xs text-[var(--text-muted)]">
-        Showing <span className="font-mono text-[var(--text)]">{from}</span>
-        –<span className="font-mono text-[var(--text)]">{to}</span> of{' '}
-        <span className="font-mono text-[var(--text)]">{total}</span>
-      </p>
-      <div className="flex items-center gap-2">
-        <SecondaryButton
-          type="button"
-          disabled={disabled || !canPrev}
-          onClick={() => onPageChange(page - 1)}
-        >
-          Previous
-        </SecondaryButton>
-        <span className="min-w-[5.5rem] text-center font-mono text-xs text-[var(--text-muted)]">
-          {page} / {Math.max(totalPages, 1)}
-        </span>
-        <SecondaryButton
-          type="button"
-          disabled={disabled || !canNext}
-          onClick={() => onPageChange(page + 1)}
-        >
-          Next
-        </SecondaryButton>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-xs text-[var(--text-muted)]">
+          Showing <span className="font-mono text-[var(--text)]">{from}</span>
+          –<span className="font-mono text-[var(--text)]">{to}</span> of{' '}
+          <span className="font-mono text-[var(--text)]">{total}</span>
+        </p>
+        {sizes && onPageSizeChange ? (
+          <label className="inline-flex items-center gap-2 text-xs text-[var(--text-muted)]">
+            <span className="sr-only">Rows per page</span>
+            <select
+              className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-xs text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              value={pageSize}
+              disabled={disabled}
+              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            >
+              {sizes.map((size) => (
+                <option key={size} value={size}>
+                  {size} / page
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
+
+      {showNav ? (
+        <nav className="flex flex-wrap items-center gap-1" aria-label="Pagination">
+          <PaginationNavButton
+            label="Previous page"
+            disabled={disabled || !canPrev}
+            onClick={() => onPageChange(page - 1)}
+          >
+            ‹
+          </PaginationNavButton>
+          {pageList(page, pages).map((item, i) =>
+            item === '…' ? (
+              <span
+                key={`ellipsis-${i}`}
+                className="inline-flex h-8 w-8 items-center justify-center font-mono text-xs text-[var(--text-muted)]"
+                aria-hidden="true"
+              >
+                …
+              </span>
+            ) : (
+              <button
+                key={item}
+                type="button"
+                aria-label={`Page ${item}`}
+                aria-current={item === page ? 'page' : undefined}
+                disabled={disabled || item === page}
+                onClick={() => onPageChange(item)}
+                className={[
+                  'inline-flex h-8 min-w-8 items-center justify-center rounded-md px-2 font-mono text-xs font-medium transition-colors disabled:pointer-events-none',
+                  item === page
+                    ? 'bg-[var(--accent)] text-white shadow-[var(--shadow-sm)] disabled:opacity-100'
+                    : 'border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)] disabled:opacity-40',
+                ].join(' ')}
+              >
+                {item}
+              </button>
+            ),
+          )}
+          <PaginationNavButton
+            label="Next page"
+            disabled={disabled || !canNext}
+            onClick={() => onPageChange(page + 1)}
+          >
+            ›
+          </PaginationNavButton>
+        </nav>
+      ) : null}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 .PHONY: help setup setup-backend setup-frontend \
-	api frontend test build tidy swagger lint preview \
-	migrate-refresh example-migrate example-seed
+	api frontend test test-frontend build tidy swagger lint preview \
+	migrate-refresh import-connections run-sync example-migrate example-migrate-truncate example-seed
 
 BACKEND := backend
 FRONTEND := frontend
@@ -29,6 +29,9 @@ frontend: ## Run the Vite dev server (:5173)
 test: ## Run backend tests (requires CGO)
 	cd $(BACKEND) && CGO_ENABLED=1 go test ./tests/...
 
+test-frontend: ## Run Playwright frontend tests
+	cd $(FRONTEND) && npm test
+
 build: ## Build frontend for production
 	cd $(FRONTEND) && npm run build
 
@@ -47,9 +50,20 @@ lint: ## Lint frontend
 migrate-refresh: ## DESTRUCTIVE: drop all app tables and re-run AutoMigrate
 	cd $(BACKEND) && go run ./cmd/migrate refresh
 
-example-migrate: ## Create example Postgres DB + tables
+import-connections: ## Upsert connections + sync jobs from backend/connections.json
+	cd $(BACKEND) && go run ./cmd/import-connections
+
+run-sync: ## Run a sync job by ID (make run-sync ID=1)
+	@test -n "$(ID)" || (echo "usage: make run-sync ID=<sync-job-id>" && exit 2)
+	cd $(BACKEND) && go run ./cmd/run-sync $(ID)
+
+example-migrate: ## Create example DB + tables (Postgres/MySQL via DB_DATABASE)
 	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env
 	cd $(EXAMPLE) && go run . migrate
+
+example-migrate-truncate: ## DESTRUCTIVE: drop example tables, then recreate schema
+	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env
+	cd $(EXAMPLE) && go run . migrate --truncate
 
 example-seed: ## Seed fake users/posts/comments/reactions
 	@test -f $(EXAMPLE)/.env || cp $(EXAMPLE)/.env.example $(EXAMPLE)/.env

@@ -5,18 +5,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/portico/backend/internal/config"
 	"github.com/portico/backend/internal/db"
-	"github.com/portico/backend/internal/secretbox"
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("load config: %v", err)
-	}
-	secretbox.SetKey(os.Getenv("APP_KEY"))
-
 	args := os.Args[1:]
 	refresh := false
 	if len(args) > 0 {
@@ -31,9 +23,9 @@ func main() {
 		}
 	}
 
-	gdb, err := db.Open(cfg)
+	gdb, _, err := db.OpenFromEnv()
 	if err != nil {
-		log.Fatalf("connect db: %v", err)
+		log.Fatalf("%v", err)
 	}
 
 	if refresh {

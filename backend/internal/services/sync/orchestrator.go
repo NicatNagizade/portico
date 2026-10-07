@@ -164,14 +164,7 @@ func (o *Orchestrator) Stop(logID uint) (*models.SyncLog, error) {
 
 func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started time.Time) (rowsTotal, rowsSynced int64, err error) {
 	var job models.SyncJob
-	if err := o.db.
-		Preload("SourceConnection").
-		Preload("DestinationConnection").
-		Preload("Relations").
-		Preload("Relations.Fields").
-		Preload("Fields", "sync_job_relation_id IS NULL").
-		Preload("Rules").
-		First(&job, jobID).Error; err != nil {
+	if err := models.PreloadSyncJob(o.db).First(&job, jobID).Error; err != nil {
 		return 0, 0, fmt.Errorf("load sync job: %w", err)
 	}
 	if job.SourceConnection == nil || job.DestinationConnection == nil {
@@ -201,7 +194,18 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 	if err != nil {
 		return 0, 0, fmt.Errorf("introspect schema: %w", err)
 	}
-	outSchema := SchemaWithFields(SchemaWithRelations(schema, job.Relations), job.Fields)
+	schema, err = EffectiveSourceSchema(schema, json.RawMessage(job.Config))
+	if err != nil {
+		return 0, 0, err
+	}
+	outSchema, err := DestinationSchema(ctx, src, schema, &job)
+	if err != nil {
+		return 0, 0, fmt.Errorf("destination schema: %w", err)
+	}
+	outSchema, err = EffectiveDestinationSchema(outSchema, json.RawMessage(job.Config))
+	if err != nil {
+		return 0, 0, err
+	}
 	if err := dst.Prepare(ctx, job.DestinationTable, outSchema, json.RawMessage(job.Config)); err != nil {
 		return 0, 0, fmt.Errorf("prepare destination: %w", err)
 	}
@@ -248,7 +252,11 @@ func (o *Orchestrator) execute(ctx context.Context, jobID, logID uint, started t
 		start := rowIndex.Add(int64(len(batch))) - int64(len(batch))
 
 		g.Go(func() error {
-			connectors.EnsureID(batch, schema, start)
+			pk, err := PrimaryKeyFromConfig(json.RawMessage(job.Config))
+			if err != nil {
+				return err
+			}
+			connectors.EnsureID(batch, schema, start, pk.Destination)
 			ApplyFields(batch, job.Fields)
 			if err := dst.WriteBatch(gctx, job.DestinationTable, batch); err != nil {
 				return err

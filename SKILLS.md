@@ -11,10 +11,11 @@ Task playbooks for common work on this repo. Read `AGENTS.md` for project rules;
 **When:** adding, moving, or updating tests.
 
 - Backend: `backend/tests/` only (`make test` → `go test ./tests/...`).
-- Frontend: `frontend/tests/` only.
+- Frontend: Playwright in `frontend/tests/` only (`make test-frontend` → `npm test`).
 - Never put `*_test.go` / test files next to source packages.
 - Prefer extending existing API tests in `backend/tests/api_test.go` over new frameworks.
 - After API shape changes, cover the happy path and one failure case if cheap.
+- First-time Playwright browsers: `cd frontend && npx playwright install chromium`.
 
 ---
 
@@ -23,14 +24,14 @@ Task playbooks for common work on this repo. Read `AGENTS.md` for project rules;
 **When:** new source/destination, or changing ListTables / Schema / Read / Write behavior.
 
 1. Implement under `backend/internal/connectors/<name>/`.
-2. Satisfy `SourceReader` and/or `DestinationWriter` in `connectors/connectors.go`.
-3. Register in `register.DefaultRegistry()`.
+2. Satisfy `SourceReader` and `DestinationWriter` in `connectors/connectors.go` (prefer both so the type is bidirectional). Implement `DestinationReader.Query` on the destination for explore.
+3. Register source and destination in `register.DefaultRegistry()`.
 4. Do **not** edit `services/sync` orchestrator for a new type — the registry is the extension point.
 5. Destination `Prepare`/`WriteBatch`: treat sync job `config` as opaque JSON; apply defaults when keys are missing.
 6. Coerce field values to the declared destination type before write (e.g. stringify when type is string).
 7. Update swagger comments + `make swagger` if HTTP surface changes; add/adjust tests under `backend/tests`.
 
-Future pairs (MySQL→MySQL, MySQL→MongoDB) should land the same way — new connector package + registry entry.
+New connectors land the same way — package under `connectors/<name>/` + registry entries for source and destination. Document stores can reuse `connectors/docutil` for in-memory filters.
 
 ---
 
@@ -40,17 +41,19 @@ Future pairs (MySQL→MySQL, MySQL→MongoDB) should land the same way — new c
 
 - No field rows → pass through all source columns.
 - `active=false` on a field or relation → skip it on import.
+- Field `values` (`sync_job_fields_values`): optional source→destination cell mappings (e.g. status `1` → `success`). Compared as strings; unmatched values pass through. Applied before destination type coercion.
 - Rules filter source rows before Count/Read (AND). Example: `field=client_id`, `operator=eq`, `value=123`.
 - Operators: `eq` / `neq` / `gt` / `gte` / `lt` / `lte` / `in` / `not_in` / `like` / `is_null` / `is_not_null`.
 - `in` / `not_in` values are comma-separated. `is_null` / `is_not_null` ignore value.
 - `active=false` on a rule → skip that predicate.
-- Relations: `belongs_to_many` / `has_many` / `has_one` / `belongs_to`; optional `parent_id` (FK to another relation row) for nesting.
+- Relations: `belongs_to_many` / `has_many` / `has_one` / `belongs_to`; nest children under `relations[]` and field overrides under `fields[]` on the parent (API/import/UI). DB keeps `parent_id` / `sync_job_relation_id` internally.
 - M2M pivot table lives in relation `config.pivot_table`.
-- Field rows may set `sync_job_relation_id` to override columns on related docs; omit for root fields.
+- Root field rows omit relation scope; relation overrides nest under that relation’s `fields[]`.
 - Always select all related columns (no per-relation column pickers).
 - Empty foreign/related keys → fall back to the related field name.
 - Emit related rows as arrays / nested objects in the destination document — not SQL joins that flatten many-to-many.
 - Job `config` = destination-global; field destination config = per-field (facet, sort, etc. for Typesense).
+- Optional `config.primary_key` maps source column(s) → destination key (default `id`). Accepts `"uid"`, `["user_id","post_id"]`, or `{ "source": [...], "destination": "id", "int": "id_int" }`. Multiple sources are joined with `_`. Omit when the default `id` is enough. Optional `int` (Typesense/Mongo) creates a numeric companion for sorting; omit `int` to skip it. Legacy `primary_key_int` still works.
 
 ---
 
@@ -74,7 +77,7 @@ Field order in models: `rows_total` before `rows_synced` — trust the model, do
 
 **When:** handlers, migrations, env, docs.
 
-- Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR` — never `DATABASE_URL`.
+- Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR` — never `DATABASE_URL`. Optional explore Ask AI: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` (OpenAI-compatible).
 - Create the app database on migrate if it does not exist.
 - Refresh schema (destructive): `make migrate-refresh` drops all app tables and re-runs AutoMigrate.
 - Status columns: int/tinyint in DB; constants in code — no DB enum constraints.

@@ -34,3 +34,10 @@ export function parsePage(raw) {
   const n = Number.parseInt(raw || '1', 10)
   return Number.isFinite(n) && n > 0 ? n : 1
 }
+
+/** Parse page_size from a URL/search string; clamps to allowed options. */
+export function parsePageSize(raw, { defaultSize = 20, options = [10, 20, 50] } = {}) {
+  const n = Number.parseInt(raw || '', 10)
+  if (Number.isFinite(n) && options.includes(n)) return n
+  return defaultSize
+}

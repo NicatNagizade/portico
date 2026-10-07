@@ -25,19 +25,37 @@ func TestSingularize(t *testing.T) {
 func TestResolveRelationKeys(t *testing.T) {
 	rel := syncsvc.ResolveRelationKeys("applicants", models.SyncJobRelation{
 		Name:  "tags",
+		Type:  models.RelationTypeBelongsToMany,
 		Table: "tags",
 	})
 	if rel.ForeignKey != "applicant_id" || rel.RelatedKey != "tag_id" {
-		t.Fatalf("unexpected defaults: %+v", rel)
+		t.Fatalf("unexpected belongs_to_many defaults: %+v", rel)
 	}
 
 	rel = syncsvc.ResolveRelationKeys("applicants", models.SyncJobRelation{
+		Type:       models.RelationTypeBelongsToMany,
 		Table:      "tags",
 		ForeignKey: "app_id",
 		RelatedKey: "label_id",
 	})
 	if rel.ForeignKey != "app_id" || rel.RelatedKey != "label_id" {
 		t.Fatalf("expected explicit keys preserved: %+v", rel)
+	}
+
+	rel = syncsvc.ResolveRelationKeys("users", models.SyncJobRelation{
+		Type:  models.RelationTypeHasMany,
+		Table: "posts",
+	})
+	if rel.ForeignKey != "user_id" || rel.RelatedKey != "" {
+		t.Fatalf("has_many should default fk only: %+v", rel)
+	}
+
+	rel = syncsvc.ResolveRelationKeys("posts", models.SyncJobRelation{
+		Type:  models.RelationTypeBelongsTo,
+		Table: "users",
+	})
+	if rel.ForeignKey != "user_id" || rel.RelatedKey != "" {
+		t.Fatalf("belongs_to should default fk from related table: %+v", rel)
 	}
 }
 
@@ -87,9 +105,37 @@ func TestSchemaWithRelationsSkipsInactive(t *testing.T) {
 		{ID: 1, Name: "tags", Type: models.RelationTypeBelongsToMany, Active: &trueVal},
 		{ID: 2, Name: "skills", Type: models.RelationTypeBelongsToMany, Active: &falseVal},
 		{ID: 3, Name: "comments", Type: models.RelationTypeHasMany, ParentID: uintPtr(1), Active: &trueVal},
-	})
+	}, nil)
 	if len(got.Columns) != 2 || got.Columns[1].Name != "tags" {
 		t.Fatalf("expected only active root relation in schema, got %+v", got.Columns)
+	}
+	if len(got.Columns[1].Columns) != 1 || got.Columns[1].Columns[0].Name != "comments" {
+		t.Fatalf("expected comments nested under tags, got %+v", got.Columns[1].Columns)
+	}
+}
+
+func TestSchemaWithRelationsNestsChildren(t *testing.T) {
+	trueVal := true
+	base := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+		},
+	}
+	got := syncsvc.SchemaWithRelations(base, []models.SyncJobRelation{
+		{ID: 1, Name: "posts", Type: models.RelationTypeHasMany, Active: &trueVal},
+		{ID: 2, Name: "comments", Type: models.RelationTypeHasMany, ParentID: uintPtr(1), Active: &trueVal},
+		{ID: 3, Name: "reactions", Type: models.RelationTypeHasMany, ParentID: uintPtr(2), Active: &trueVal},
+	}, nil)
+	if len(got.Columns) != 2 || got.Columns[1].Name != "posts" {
+		t.Fatalf("expected posts root, got %+v", got.Columns)
+	}
+	posts := got.Columns[1]
+	if len(posts.Columns) != 1 || posts.Columns[0].Name != "comments" {
+		t.Fatalf("expected comments under posts, got %+v", posts.Columns)
+	}
+	comments := posts.Columns[0]
+	if len(comments.Columns) != 1 || comments.Columns[0].Name != "reactions" {
+		t.Fatalf("expected reactions under comments, got %+v", comments.Columns)
 	}
 }
 
@@ -102,7 +148,7 @@ func TestSchemaWithRelationsIncludesHasManyRoot(t *testing.T) {
 	}
 	got := syncsvc.SchemaWithRelations(base, []models.SyncJobRelation{
 		{Name: "posts", Type: models.RelationTypeHasMany, Active: &trueVal},
-	})
+	}, nil)
 	if len(got.Columns) != 2 || got.Columns[1].Name != "posts" || got.Columns[1].Type != connectors.FieldTypeObjectArray {
 		t.Fatalf("expected posts object_array, got %+v", got.Columns)
 	}
@@ -118,12 +164,71 @@ func TestSchemaWithRelationsIncludesHasOneAsObject(t *testing.T) {
 	got := syncsvc.SchemaWithRelations(base, []models.SyncJobRelation{
 		{Name: "profile", Type: models.RelationTypeHasOne, Active: &trueVal},
 		{Name: "company", Type: models.RelationTypeBelongsTo, Active: &trueVal},
-	})
+	}, nil)
 	if len(got.Columns) != 3 {
 		t.Fatalf("expected 3 columns, got %+v", got.Columns)
 	}
 	if got.Columns[1].Type != connectors.FieldTypeObject || got.Columns[2].Type != connectors.FieldTypeObject {
 		t.Fatalf("expected has_one/belongs_to as object, got %+v", got.Columns)
+	}
+}
+
+func TestSchemaWithRelationsIncludesRelatedFields(t *testing.T) {
+	trueVal := true
+	base := &connectors.TableSchema{
+		Columns: []connectors.ColumnSchema{
+			{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+		},
+	}
+	related := map[string]*connectors.TableSchema{
+		"posts": {
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "title", Type: connectors.FieldTypeString},
+				{Name: "score", Type: connectors.FieldTypeFloat64},
+			},
+		},
+		"comments": {
+			Columns: []connectors.ColumnSchema{
+				{Name: "id", Type: connectors.FieldTypeInt64, PrimaryKey: true},
+				{Name: "body", Type: connectors.FieldTypeString},
+			},
+		},
+	}
+	got := syncsvc.SchemaWithRelations(base, []models.SyncJobRelation{
+		{
+			ID: 1, Name: "posts", Type: models.RelationTypeHasMany, Table: "posts", Active: &trueVal,
+			Fields: []models.SyncJobField{
+				{SourceName: "score", DestinationType: string(connectors.FieldTypeInt64), Active: &trueVal},
+			},
+		},
+		{ID: 2, Name: "comments", Type: models.RelationTypeHasMany, Table: "comments", ParentID: uintPtr(1), Active: &trueVal},
+	}, related)
+
+	posts := got.Columns[1]
+	if len(posts.Columns) < 4 {
+		t.Fatalf("expected posts fields + comments relation, got %+v", posts.Columns)
+	}
+	byName := map[string]connectors.ColumnSchema{}
+	for _, c := range posts.Columns {
+		byName[c.Name] = c
+	}
+	if byName["title"].Type != connectors.FieldTypeString {
+		t.Fatalf("title=%+v", byName["title"])
+	}
+	if byName["score"].Type != connectors.FieldTypeInt64 {
+		t.Fatalf("score should use field override type, got %+v", byName["score"])
+	}
+	comments, ok := byName["comments"]
+	if !ok || comments.Type != connectors.FieldTypeObjectArray {
+		t.Fatalf("comments relation=%+v", comments)
+	}
+	commentFields := map[string]connectors.FieldType{}
+	for _, c := range comments.Columns {
+		commentFields[c.Name] = c.Type
+	}
+	if commentFields["body"] != connectors.FieldTypeString || commentFields["id"] != connectors.FieldTypeInt64 {
+		t.Fatalf("comment fields=%v", commentFields)
 	}
 }
 

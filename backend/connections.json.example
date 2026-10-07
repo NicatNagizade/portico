@@ -1,0 +1,138 @@
+{
+  "connections": [
+    {
+      "name": "local-test-db",
+      "type": "postgres",
+      "config": {
+        "host": "localhost",
+        "port": 5432,
+        "user": "user",
+        "password": "password",
+        "database": "portico_example",
+        "sslmode": "disable"
+      }
+    },
+    {
+      "name": "local-typesense",
+      "type": "typesense",
+      "config": {
+        "host": "localhost",
+        "port": 8108,
+        "protocol": "http",
+        "api_key": "xyz"
+      }
+    },
+    {
+      "name": "local-mongo",
+      "type": "mongodb",
+      "config": {
+        "host": "127.0.0.1",
+        "port": 27017,
+        "user": "user",
+        "password": "password",
+        "database": "portico_test",
+        "auth_source": "admin"
+      }
+    },
+    {
+      "name": "local-redis",
+      "type": "redis",
+      "config": {
+        "host": "localhost",
+        "port": 6379,
+        "password": "eYVX7EwVmmxKPCDmwMtyKVge8oLd2t81"
+      }
+    }
+  ],
+  "sync_jobs": [
+    {
+      "name": "posts to typesense",
+      "source_connection": "local-test-db",
+      "source_table": "posts",
+      "destination_connection": "local-typesense",
+      "destination_table": "posts",
+      "chunk_size": 2000,
+      "workers": 4,
+      "config": {
+        "enable_nested_fields": true
+      },
+      "relations": [
+        {
+          "name": "user",
+          "type": "belongs_to",
+          "table": "users"
+        },
+        {
+          "name": "comments",
+          "type": "has_many",
+          "table": "comments",
+          "relations": [
+            {
+              "name": "reactions",
+              "type": "has_many",
+              "table": "reactions"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "posts to mongo db",
+      "source_connection": "local-test-db",
+      "source_table": "posts",
+      "destination_connection": "local-mongo",
+      "destination_table": "posts",
+      "chunk_size": 2000,
+      "workers": 4,
+      "config": {},
+      "relations": [
+        {
+          "name": "user",
+          "type": "belongs_to",
+          "table": "users"
+        },
+        {
+          "name": "comments",
+          "type": "has_many",
+          "table": "comments",
+          "relations": [
+            {
+              "name": "reactions",
+              "type": "has_many",
+              "table": "reactions"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "posts to redis",
+      "source_connection": "local-test-db",
+      "source_table": "posts",
+      "destination_connection": "local-redis",
+      "destination_table": "posts",
+      "chunk_size": 2000,
+      "workers": 4,
+      "config": {},
+      "relations": [
+        {
+          "name": "user",
+          "type": "belongs_to",
+          "table": "users"
+        },
+        {
+          "name": "comments",
+          "type": "has_many",
+          "table": "comments",
+          "relations": [
+            {
+              "name": "reactions",
+              "type": "has_many",
+              "table": "reactions"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

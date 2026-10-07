@@ -6,22 +6,34 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/portico/backend/internal/pagination"
+	"github.com/portico/backend/internal/services/sync"
 	"github.com/portico/backend/internal/services/syncjob"
 )
 
 // ListSyncJobs godoc
 // @Summary List sync jobs
-// @Description Returns a paginated list of sync jobs. Default page size is 20; maximum is 100.
+// @Description Returns a paginated list of sync jobs. Optionally filter by connection_id (matches source or destination). Default page size is 20; maximum is 100.
 // @Tags sync-jobs
 // @Produce json
+// @Param connection_id query int false "Filter by connection ID (source or destination)"
 // @Param page query int false "Page number (1-based)" default(1) minimum(1)
 // @Param page_size query int false "Items per page (max 100)" default(20) minimum(1) maximum(100)
 // @Success 200 {object} SyncJobListResponse
+// @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /sync-jobs [get]
 func (h *Handlers) ListSyncJobs(c *gin.Context) {
+	var connectionID *uint
+	if raw := c.Query("connection_id"); raw != "" {
+		id, err := parseID(raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid connection_id"})
+			return
+		}
+		connectionID = &id
+	}
 	p := pagination.Parse(c)
-	items, total, err := h.SyncJobs.List(p.Page, p.PageSize)
+	items, total, err := h.SyncJobs.List(connectionID, p.Page, p.PageSize)
 	if err != nil {
 		writeErr(c, err, nil)
 		return
@@ -125,6 +137,18 @@ func (h *Handlers) DeleteSyncJob(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handlers) requireSyncJob(c *gin.Context) (uint, bool) {
+	id, ok := pathID(c)
+	if !ok {
+		return 0, false
+	}
+	if _, err := h.SyncJobs.Get(id); err != nil {
+		writeErr(c, err, syncjob.ErrNotFound)
+		return 0, false
+	}
+	return id, true
+}
+
 // RunSyncJob godoc
 // @Summary Run a sync job
 // @Description Runs the sync synchronously and returns the finished sync log.
@@ -136,12 +160,8 @@ func (h *Handlers) DeleteSyncJob(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse
 // @Router /sync-jobs/{id}/run [post]
 func (h *Handlers) RunSyncJob(c *gin.Context) {
-	id, ok := pathID(c)
+	id, ok := h.requireSyncJob(c)
 	if !ok {
-		return
-	}
-	if _, err := h.SyncJobs.Get(id); err != nil {
-		writeErr(c, err, syncjob.ErrNotFound)
 		return
 	}
 	logEntry, err := h.Sync.Run(c.Request.Context(), id)
@@ -167,12 +187,8 @@ func (h *Handlers) RunSyncJob(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse
 // @Router /sync-jobs/{id}/start [post]
 func (h *Handlers) StartSyncJob(c *gin.Context) {
-	id, ok := pathID(c)
+	id, ok := h.requireSyncJob(c)
 	if !ok {
-		return
-	}
-	if _, err := h.SyncJobs.Get(id); err != nil {
-		writeErr(c, err, syncjob.ErrNotFound)
 		return
 	}
 	logEntry, err := h.Sync.Start(id)
@@ -184,20 +200,23 @@ func (h *Handlers) StartSyncJob(c *gin.Context) {
 }
 
 type ExploreRequest struct {
-	Side     string `json:"side" binding:"required" example:"source"`
-	Page     int    `json:"page" example:"1"`
-	PageSize int    `json:"page_size" example:"50"`
-	SortBy   string `json:"sort_by" example:"id"`
-	SortDir  string `json:"sort_dir" example:"asc"`
+	Side     string             `json:"side" binding:"required" example:"source"`
+	Page     int                `json:"page" example:"1"`
+	PageSize int                `json:"page_size" example:"50"`
+	SortBy   string             `json:"sort_by" example:"id"`
+	SortDir  string             `json:"sort_dir" example:"asc"`
+	Filters  []sync.FilterInput `json:"filters"`
 }
 
 type ExploreExportRequest struct {
-	Side string `json:"side" binding:"required" example:"source"`
+	Side    string             `json:"side" binding:"required" example:"source"`
+	Filters []sync.FilterInput `json:"filters"`
+	Fields  []string           `json:"fields"` // omit = all columns; empty = none
 }
 
 // ExploreSyncJob godoc
 // @Summary Explore sync job data
-// @Description Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job.
+// @Description Returns a paginated preview of source (rules/fields/relations applied) or destination documents for a sync job. Optional filters are AND'd (with job rules on source).
 // @Tags sync-jobs
 // @Accept json
 // @Produce json
@@ -218,7 +237,7 @@ func (h *Handlers) ExploreSyncJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid json body"})
 		return
 	}
-	result, err := h.Sync.Preview(c.Request.Context(), id, req.Side, req.Page, req.PageSize, req.SortBy, req.SortDir)
+	result, err := h.Sync.Preview(c.Request.Context(), id, req.Side, req.Page, req.PageSize, req.SortBy, req.SortDir, req.Filters)
 	if err != nil {
 		writeErr(c, err, nil)
 		return
@@ -228,7 +247,7 @@ func (h *Handlers) ExploreSyncJob(c *gin.Context) {
 
 // ExportSyncJobExplore godoc
 // @Summary Export sync job explore data as CSV
-// @Description Downloads matching source or destination rows as CSV.
+// @Description Downloads matching source or destination rows as CSV. Optional filters match the explore preview. Optional fields limits CSV columns (omit for all).
 // @Tags sync-jobs
 // @Accept json
 // @Produce text/csv
@@ -250,7 +269,7 @@ func (h *Handlers) ExportSyncJobExplore(c *gin.Context) {
 		return
 	}
 	var buf bytes.Buffer
-	filename, err := h.Sync.ExportCSV(c.Request.Context(), id, req.Side, &buf)
+	filename, err := h.Sync.ExportCSV(c.Request.Context(), id, req.Side, &buf, req.Filters, req.Fields)
 	if err != nil {
 		writeErr(c, err, nil)
 		return
