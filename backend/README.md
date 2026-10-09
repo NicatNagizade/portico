@@ -1,24 +1,24 @@
 # Portico Sync API
 
-Go API for connections and sync jobs (MySQL / Postgres / SQLite / Typesense / MongoDB / Redis as source or destination), Gin + GORM.
+Node API for connections and sync jobs (MySQL / Postgres / SQLite / Typesense / MongoDB / Redis as source or destination). Express + Drizzle.
 
 ## Setup
 
 ```bash
 cp .env.example .env
-go mod tidy
-go run ./cmd/api
+npm install
+npm run api
 ```
 
-Listens on `HTTP_ADDR` (default `:8080`). On startup, creates `DB_NAME` if missing and auto-migrates.
+Listens on `HTTP_ADDR` (default `:8080`). On startup, creates `DB_NAME` if missing and applies migrations in `src/db/migrations/`.
 
-From the repo root: `make api`, `make migrate-refresh`, `make import-connections`, `make run-sync ID=1`, `make swagger`, `make test`.
+From the repo root: `make api`, `make migrate-refresh`, `make import-connections`, `make run-sync ID=1`, `make test`.
 
 ### Run a sync job
 
 ```bash
 make run-sync ID=1
-# or: go run ./cmd/run-sync 1
+# or: npm run run-sync -- 1
 ```
 
 Runs the job in this process (same path as `POST /sync-jobs/{id}/run`) and prints the finished sync log. Ctrl+C stops it. Exit code is non-zero when the sync fails.
@@ -38,7 +38,7 @@ Upserts connections by `(name, type)` and sync jobs by `name`. Jobs reference co
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HTTP_ADDR` | Listen address | `:8080` |
-| `DB_DRIVER` | App DB driver | `postgres` |
+| `DB_DRIVER` | App DB driver (`postgres` or `sqlite`) | `postgres` |
 | `DB_HOST` | App DB host | `localhost` |
 | `DB_PORT` | App DB port | `5432` |
 | `DB_USER` | App DB user | `postgres` |
@@ -51,20 +51,37 @@ Upserts connections by `(name, type)` and sync jobs by `name`. Jobs reference co
 | `OPENAI_MODEL` | Optional model id. | `gpt-4o-mini` |
 | `CONNECTIONS_FILE` | Path for `import-connections` | `connections.json` |
 
-## Swagger
-
-[http://localhost:8080/api/documentation](http://localhost:8080/api/documentation) · [`docs/swagger.json`](docs/swagger.json)
-
-```bash
-make swagger   # from repo root
-```
-
 ## Tests
 
 ```bash
-CGO_ENABLED=1 go test ./tests/...
+npm test
 # or: make test
 ```
+
+## Schema
+
+The app database (connections, sync jobs, logs) goes through Drizzle. `openDb` applies `src/db/migrations/`. If those tables already exist and drizzle has no migration record, the current migrations are recorded as applied and are not run again. `npm run db:generate` writes a new Postgres and SQLite migration after a schema change. Connector queries stay raw SQL under `src/connectors/sql/`; those databases are the user's, and their tables are not known at compile time.
+
+`make migrate-refresh` drops all app tables and recreates the schema.
+
+## Layout
+
+| Path | Role |
+|---|---|
+| `src/index.ts`, `src/app.ts` | Process entry and Express app wiring |
+| `src/cli/` | `migrate`, `import-connections`, `run-sync` entrypoints |
+| `src/http/` | Routes per resource, request helpers, JSON presenters |
+| `src/domain/` | Shared types (connection, sync job, …) and HTTP errors |
+| `src/db/` | Drizzle client, typed schema, generated migrations (app database only) |
+| `src/repositories/` | App DB reads/writes per table, row → domain mappers |
+| `src/services/syncJobs/` | Create/update a sync job with nested relations, fields, rules |
+| `src/services/sync/` | Orchestrator (logs, cancel), runner (chunks + workers), relation loading |
+| `src/services/explore/` | Explore preview + CSV export for source / destination |
+| `src/connectors/<type>/` | One folder per connector: `source.ts`, `destination.ts`, helpers |
+| `src/connectors/shared/` | In-memory filters, paging, schema inference used by document stores |
+| `src/utils/` | Generic helpers (values, collections, CSV, worker pool, secretbox) |
+
+Add a connector by creating `src/connectors/<type>/` with a `SourceReader` and `DestinationWriter`, then registering both in `connectors/registry.ts`.
 
 ## API
 

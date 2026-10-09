@@ -14,7 +14,6 @@ import {
   Dialog,
   EmptyState,
   ErrorBanner,
-  Field,
   GhostButton,
   LoadingState,
   MetaChip,
@@ -179,38 +178,110 @@ function CloseChipIcon() {
   )
 }
 
-function SideToggle({ value, onChange, disabled }) {
+/** Source / destination picker; each card shows what will be browsed. */
+function SidePicker({ job, side, onChange }) {
+  const ruleCount = job.rules?.length ?? 0
+  const relationCount = job.relations?.length ?? 0
+  const options = [
+    {
+      value: 'source',
+      label: 'Source',
+      connection: job.source_connection?.name || `Connection #${job.source_connection_id}`,
+      table: job.source_table,
+      hint: `Rows with field mappings applied · ${ruleCount} rule${ruleCount === 1 ? '' : 's'} · ${relationCount} relation${relationCount === 1 ? '' : 's'}`,
+    },
+    {
+      value: 'destination',
+      label: 'Destination',
+      connection:
+        job.destination_connection?.name || `Connection #${job.destination_connection_id}`,
+      table: job.destination_table,
+      hint: 'Documents exactly as stored after the last sync',
+    },
+  ]
+
   return (
     <div
-      role="group"
-      aria-label="Connection side"
-      className="inline-flex w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-1 shadow-[var(--shadow-sm)]"
+      role="radiogroup"
+      aria-label="Data to browse"
+      className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-stretch"
     >
-      {[
-        { value: 'source', label: 'Source' },
-        { value: 'destination', label: 'Destination' },
-      ].map((option) => {
-        const active = value === option.value
+      {options.map((option, index) => {
+        const active = side === option.value
         return (
-          <button
-            key={option.value}
-            type="button"
-            disabled={disabled}
-            aria-pressed={active}
-            onClick={() => onChange(option.value)}
-            className={[
-              'flex-1 rounded-md px-3 py-2 text-sm font-medium transition-all',
-              active
-                ? 'bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-sm)]'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]',
-              disabled ? 'opacity-50' : '',
-            ].join(' ')}
-          >
-            {option.label}
-          </button>
+          <div key={option.value} className="contents">
+            {index ? (
+              <span
+                className="hidden items-center text-[var(--text-muted)] sm:flex"
+                aria-hidden="true"
+              >
+                →
+              </span>
+            ) : null}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(option.value)}
+              className={[
+                'flex min-w-0 items-start gap-3 rounded-xl border p-3 text-left transition-all',
+                active
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)]/60 shadow-[0_0_0_3px_var(--accent-soft)]'
+                  : 'border-[var(--border)] bg-[var(--surface)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)]',
+              ].join(' ')}
+            >
+              <span
+                className={[
+                  'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2',
+                  active ? 'border-[var(--accent)]' : 'border-[var(--border-strong)]',
+                ].join(' ')}
+                aria-hidden="true"
+              >
+                {active ? <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" /> : null}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-sm font-semibold text-[var(--text)]">{option.label}</span>
+                  <span className="truncate font-mono text-[11px] text-[var(--text-muted)]">
+                    {option.connection} / {option.table}
+                  </span>
+                </span>
+                <span className="mt-1 block text-xs text-[var(--text-muted)]">{option.hint}</span>
+              </span>
+            </button>
+          </div>
         )
       })}
     </div>
+  )
+}
+
+function TableCellValue({ value }) {
+  if (value === null || value === undefined || value === '') {
+    return <span className="text-[var(--text-muted)]/70">—</span>
+  }
+  if (Array.isArray(value)) {
+    return (
+      <span className="inline-flex rounded-md bg-[var(--accent-soft)] px-2 py-1 font-mono text-[11px] text-[var(--accent-ink)]">
+        [{value.length} {value.length === 1 ? 'item' : 'items'}]
+      </span>
+    )
+  }
+  if (typeof value === 'object') {
+    const count = Object.keys(value).length
+    return (
+      <span className="inline-flex rounded-md bg-[var(--bg-elevated)] px-2 py-1 font-mono text-[11px] text-[var(--text-muted)]">
+        {'{'}
+        {count} {count === 1 ? 'field' : 'fields'}
+        {'}'}
+      </span>
+    )
+  }
+  const text = String(value)
+  return (
+    <span className="block truncate font-mono text-xs" title={text}>
+      {text}
+    </span>
   )
 }
 
@@ -370,11 +441,21 @@ function isActiveExploreFilter(f) {
   return true
 }
 
+/** `like` without `%` matches anywhere in the value. A value that already has `%` is a SQL pattern. */
+function likeValue(value) {
+  const text = String(value ?? '')
+  return text.includes('%') ? text : `%${text}%`
+}
+
 function activeExploreFilters(filters) {
   return filters.filter(isActiveExploreFilter).map((f) => ({
     field: f.field.trim(),
     operator: f.operator,
-    value: ruleNeedsValue(f.operator) ? String(f.value ?? '') : '',
+    value: !ruleNeedsValue(f.operator)
+      ? ''
+      : f.operator === 'like'
+        ? likeValue(f.value)
+        : String(f.value ?? ''),
   }))
 }
 
@@ -635,8 +716,6 @@ export default function ExplorePage() {
   const { page, rows, columns, sortBy, sortDir, total, totalPages, hasRun } = preview
   const displayColumns = visibleColumns(columns, selectedFields)
   const busy = queryLoading || exporting
-  const ruleCount = job?.rules?.length ?? 0
-  const relationCount = job?.relations?.length ?? 0
   const filterIndexes = activeFilterIndexes(filters)
   const filterCount = filterIndexes.length
   const fieldsCustom = selectedFields !== null
@@ -673,182 +752,144 @@ export default function ExplorePage() {
         />
       ) : (
         <div className="space-y-5">
-          <form
-            className="animate-fade-up rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]"
-            onSubmit={(e) => {
-              e.preventDefault()
-              runQuery(1)
-            }}
-          >
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-              <div className="min-w-0 flex-1">
-                <Field label="Sync job">
-                  <select
-                    className={inputClassName}
-                    value={jobId}
-                    onChange={(e) => setJobId(e.target.value)}
-                  >
-                    <option value="">Select a sync job…</option>
-                    {jobs.map((j) => (
-                      <option key={j.id} value={String(j.id)}>
-                        {j.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-
-              <div className="w-full lg:w-64">
-                <span className="mb-1.5 block text-[13px] font-medium text-[var(--text)]">
-                  Side
-                </span>
-                <SideToggle value={side} onChange={changeSide} disabled={!jobId} />
-              </div>
-
-              <div className="flex shrink-0 flex-wrap gap-2 lg:pb-0.5">
-                <PrimaryButton type="submit" disabled={!jobId || busy}>
-                  <PreviewIcon />
-                  {queryLoading ? 'Loading…' : 'Preview'}
-                </PrimaryButton>
-                <SecondaryButton
-                  type="button"
-                  disabled={!jobId || busy}
-                  onClick={handleExport}
-                >
-                  <DownloadIcon />
-                  {exporting ? 'Downloading…' : 'Download CSV'}
-                </SecondaryButton>
-              </div>
-            </div>
-
-            {jobLoading ? (
-              <p className="mt-4 border-t border-[var(--border)] pt-4 text-sm text-[var(--text-muted)]">
-                Loading job details…
-              </p>
-            ) : job ? (
-              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-4">
-                <MetaChip>
-                  {job.source_table} → {job.destination_table}
-                </MetaChip>
-                <MetaChip>
-                  {ruleCount} rule{ruleCount === 1 ? '' : 's'}
-                </MetaChip>
-                <MetaChip>
-                  {relationCount} relation{relationCount === 1 ? '' : 's'}
-                </MetaChip>
-                <MetaChip>
-                  {side === 'source'
-                    ? 'Mapped source rows'
-                    : 'Stored destination documents'}
-                </MetaChip>
-                <Link
-                  to={`/sync-jobs/${job.id}`}
-                  className="ml-auto inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent)] hover:underline"
-                >
-                  Open job
-                  <ExternalLinkIcon />
-                </Link>
-              </div>
-            ) : null}
-          </form>
-
-          {jobId ? (
-            <div className="animate-fade-up rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-sm)] sm:p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold tracking-[0.14em] text-[var(--text-muted)] uppercase">
-                    Refine
-                  </p>
-                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                    Filters change the query · Fields change the table and CSV
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <RefineButton
-                    icon={<FilterIcon />}
-                    label="Filters"
-                    active={filterCount > 0}
-                    count={filterCount || undefined}
-                    onClick={openFilters}
-                  />
-                  <RefineButton
-                    icon={<ColumnsIcon />}
-                    label="Fields"
-                    active={fieldsCustom}
-                    detail={fieldsDetail}
-                    onClick={openFields}
-                  />
-                  {aiEnabled ? (
-                    <RefineButton
-                      icon={<SparkleIcon />}
-                      label="Ask AI"
-                      onClick={openAI}
-                    />
+          <div className="animate-fade-up overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-md)]">
+            <div className="space-y-4 p-4 sm:p-5">
+              <div>
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <label htmlFor="explore-job" className="text-[13px] font-medium text-[var(--text)]">
+                    Sync job
+                  </label>
+                  {job ? (
+                    <Link
+                      to={`/sync-jobs/${job.id}`}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline"
+                    >
+                      Open job
+                      <ExternalLinkIcon />
+                    </Link>
                   ) : null}
                 </div>
+                <select
+                  id="explore-job"
+                  className={inputClassName}
+                  value={jobId}
+                  onChange={(e) => setJobId(e.target.value)}
+                >
+                  <option value="">Select a sync job…</option>
+                  {jobs.map((j) => (
+                    <option key={j.id} value={String(j.id)}>
+                      {j.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {filterCount > 0 || fieldsCustom ? (
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
-                  {filterIndexes.map((index) => {
-                    const f = filters[index]
-                    const label = filterChipLabel({
-                      field: f.field.trim(),
-                      operator: f.operator,
-                      value: String(f.value ?? ''),
-                    })
-                    return (
-                      <span
-                        key={`${index}-${label}`}
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2 py-1 font-mono text-[11px] text-[var(--accent-ink)]"
-                      >
+              {jobLoading ? (
+                <p className="text-sm text-[var(--text-muted)]">Loading job details…</p>
+              ) : job ? (
+                <div>
+                  <p className="mb-1.5 text-[13px] font-medium text-[var(--text)]">Browse</p>
+                  <SidePicker job={job} side={side} onChange={changeSide} />
+                </div>
+              ) : null}
+            </div>
+
+            {job ? (
+              <div className="border-t border-[var(--border)] bg-[var(--bg-elevated)]/60 px-4 py-3 sm:px-5">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="flex flex-wrap gap-2">
+                    <RefineButton
+                      icon={<FilterIcon />}
+                      label="Filters"
+                      active={filterCount > 0}
+                      count={filterCount || undefined}
+                      onClick={openFilters}
+                    />
+                    <RefineButton
+                      icon={<ColumnsIcon />}
+                      label="Fields"
+                      active={fieldsCustom}
+                      detail={fieldsDetail}
+                      onClick={openFields}
+                    />
+                    {aiEnabled ? (
+                      <RefineButton icon={<SparkleIcon />} label="Ask AI" onClick={openAI} />
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <SecondaryButton type="button" disabled={busy} onClick={handleExport}>
+                      <DownloadIcon />
+                      {exporting ? 'Downloading…' : 'Export CSV'}
+                    </SecondaryButton>
+                    <PrimaryButton type="button" disabled={busy} onClick={() => runQuery(1)}>
+                      <PreviewIcon />
+                      {queryLoading ? 'Loading…' : hasRun ? 'Refresh' : 'Preview'}
+                    </PrimaryButton>
+                  </div>
+                </div>
+
+                {filterCount > 0 || fieldsCustom ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+                    {filterIndexes.map((index) => {
+                      const f = filters[index]
+                      const label = filterChipLabel({
+                        field: f.field.trim(),
+                        operator: f.operator,
+                        value: String(f.value ?? ''),
+                      })
+                      return (
+                        <span
+                          key={`${index}-${label}`}
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2 py-1 font-mono text-[11px] text-[var(--accent-ink)]"
+                        >
+                          <button
+                            type="button"
+                            className="min-w-0 truncate hover:underline"
+                            title="Edit filters"
+                            onClick={openFilters}
+                          >
+                            {label}
+                          </button>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded p-0.5 text-[var(--accent)] hover:bg-[var(--surface)]"
+                            aria-label={`Remove filter ${label}`}
+                            onClick={() => removeFilterAt(index)}
+                          >
+                            <CloseChipIcon />
+                          </button>
+                        </span>
+                      )
+                    })}
+                    {fieldsCustom ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-[11px] text-[var(--text-muted)]">
                         <button
                           type="button"
-                          className="min-w-0 truncate hover:underline"
-                          title="Edit filters"
-                          onClick={openFilters}
+                          className="hover:text-[var(--text)] hover:underline"
+                          onClick={openFields}
                         >
-                          {label}
+                          {visibleFieldCount} column{visibleFieldCount === 1 ? '' : 's'}
                         </button>
                         <button
                           type="button"
-                          className="shrink-0 rounded p-0.5 text-[var(--accent)] hover:bg-[var(--surface)]"
-                          aria-label={`Remove filter ${label}`}
-                          onClick={() => removeFilterAt(index)}
+                          className="shrink-0 rounded p-0.5 hover:bg-[var(--bg-elevated)] hover:text-[var(--text)]"
+                          aria-label="Show all fields"
+                          onClick={resetFields}
                         >
                           <CloseChipIcon />
                         </button>
                       </span>
-                    )
-                  })}
-                  {fieldsCustom ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 font-mono text-[11px] text-[var(--text-muted)]">
-                      <button
-                        type="button"
-                        className="hover:text-[var(--text)] hover:underline"
-                        onClick={openFields}
-                      >
-                        {visibleFieldCount} column{visibleFieldCount === 1 ? '' : 's'}
-                      </button>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded p-0.5 hover:bg-[var(--surface)] hover:text-[var(--text)]"
-                        aria-label="Show all fields"
-                        onClick={resetFields}
-                      >
-                        <CloseChipIcon />
-                      </button>
-                    </span>
-                  ) : null}
-                  {filterCount > 0 ? (
-                    <GhostButton type="button" className="ml-auto text-xs" onClick={clearFilters}>
-                      Clear filters
-                    </GhostButton>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+                    ) : null}
+                    {filterCount > 0 ? (
+                      <GhostButton type="button" className="ml-auto text-xs" onClick={clearFilters}>
+                        Clear filters
+                      </GhostButton>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
 
           {!jobId ? (
             <EmptyState
@@ -858,7 +899,7 @@ export default function ExplorePage() {
           ) : !hasRun && !queryLoading ? (
             <EmptyState
               title="Ready to preview"
-              message={`Optionally set filters and fields above, then load ${side} rows for “${job?.name || 'this job'}”.`}
+              message={`Press Preview to load ${side === 'source' ? 'source rows' : 'destination documents'}. Add filters or pick fields first if you only need part of the data.`}
             />
           ) : null}
 
@@ -870,22 +911,31 @@ export default function ExplorePage() {
 
           {hasRun && rows.length > 0 ? (
             <div className="space-y-3">
-              <div>
-                <h3 className="text-sm font-semibold tracking-tight text-[var(--text)]">
-                  Results
-                </h3>
-                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                  {total.toLocaleString()} row{total === 1 ? '' : 's'} from {side}
-                  {displayColumns.length
-                    ? ` · ${displayColumns.length} column${displayColumns.length === 1 ? '' : 's'}`
-                    : ''}
-                  {fieldsCustom && columns.length !== displayColumns.length
-                    ? ` of ${columns.length}`
-                    : ''}
-                  {sortBy ? ` · sorted by ${sortBy} ${sortDir}` : ''}
-                  {' · '}click a row for full values
-                  {queryLoading ? ' · refreshing…' : ''}
-                </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="font-mono text-[10px] font-semibold tracking-[0.16em] text-[var(--text-muted)] uppercase">
+                    Preview
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold tracking-tight text-[var(--text)]">
+                    {side === 'source' ? 'Source rows' : 'Destination documents'}
+                  </h3>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    Click any row to inspect every value
+                    {queryLoading ? ' · refreshing…' : ''}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <MetaChip>
+                    {total.toLocaleString()} row{total === 1 ? '' : 's'}
+                  </MetaChip>
+                  <MetaChip>
+                    {displayColumns.length} column{displayColumns.length === 1 ? '' : 's'}
+                    {fieldsCustom && columns.length !== displayColumns.length
+                      ? ` of ${columns.length}`
+                      : ''}
+                  </MetaChip>
+                  {sortBy ? <MetaChip>Sorted by {sortBy} {sortDir}</MetaChip> : null}
+                </div>
               </div>
 
               {displayColumns.length === 0 ? (
@@ -922,16 +972,25 @@ export default function ExplorePage() {
                         {displayColumns.map((col) => {
                           const active = sortBy === col
                           return (
-                            <Th key={col}>
+                            <Th key={col} className="sticky top-0 z-10">
                               <button
                                 type="button"
-                                className="block w-full truncate text-left uppercase hover:text-[var(--text)]"
+                                className="group flex w-full items-center justify-between gap-2 text-left uppercase hover:text-[var(--text)]"
                                 title={`Sort by ${col}`}
                                 onClick={() => toggleSort(col)}
                                 disabled={queryLoading}
                               >
-                                {col}
-                                {active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                                <span className="truncate">{col}</span>
+                                <span
+                                  className={[
+                                    'shrink-0 text-sm tracking-normal',
+                                    active
+                                      ? 'text-[var(--accent)]'
+                                      : 'text-[var(--border-strong)] opacity-0 transition-opacity group-hover:opacity-100',
+                                  ].join(' ')}
+                                >
+                                  {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                </span>
                               </button>
                             </Th>
                           )
@@ -942,19 +1001,14 @@ export default function ExplorePage() {
                       {rows.map((row, idx) => (
                         <tr
                           key={row.id != null ? String(row.id) : idx}
-                          className="cursor-pointer transition-colors hover:bg-[var(--accent-soft)]/40"
+                          className="cursor-pointer transition-colors odd:bg-[var(--surface)] even:bg-[var(--bg-elevated)]/35 hover:bg-[var(--accent-soft)]/55"
                           onClick={() => setSelectedRow(row)}
                         >
-                          {displayColumns.map((col) => {
-                            const text = cellDisplay(row[col])
-                            return (
-                              <Td key={col} className="overflow-hidden">
-                                <span className="block truncate font-mono text-xs" title={text}>
-                                  {text}
-                                </span>
-                              </Td>
-                            )
-                          })}
+                          {displayColumns.map((col) => (
+                            <Td key={col} className="overflow-hidden">
+                              <TableCellValue value={row[col]} />
+                            </Td>
+                          ))}
                         </tr>
                       ))}
                     </tbody>
@@ -967,7 +1021,7 @@ export default function ExplorePage() {
           <Dialog
             open={filtersOpen}
             title="Filters"
-            description="Narrow the preview query. All filters are AND’d. Job rules still apply on source."
+            description="Narrow the preview query. All filters are AND’d. Like matches anywhere unless you add % yourself. Job rules still apply on source."
             onClose={() => setFiltersOpen(false)}
             size="lg"
             footer={

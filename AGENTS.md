@@ -6,10 +6,10 @@ Sync API + admin UI. Connections (MySQL / Postgres / SQLite / Typesense / MongoD
 
 | Path | Role |
 |------|------|
-| `backend/` | Go API — Gin + GORM |
-| `backend/cmd/` | CLI entrypoints (`api`, `migrate`, `import-connections`, `run-sync`) |
-| `backend/internal/handlers/` | HTTP handlers split by concern (`handlers.go`, `connections.go`, `sync_jobs.go`, `sync_logs.go`) |
-| `backend/internal/connectors/` | Source/destination connectors; shared SQL in `sqlutil/` |
+| `backend/` | Node API — Express + Drizzle |
+| `backend/src/cli/` | CLI entrypoints (`migrate`, `import-connections`, `run-sync`) |
+| `backend/src/http/` | HTTP routes (`connections`, `syncJobs`, `syncLogs`) |
+| `backend/src/connectors/` | Source/destination connectors; shared SQL in `connectors/sql/` |
 | `frontend/` | React admin UI — Vite + Tailwind |
 | `frontend/src/api/` | Thin API clients (`client.js` + resource modules) |
 | `exampleData/` | Seed Postgres DB for nested-relation demos |
@@ -21,17 +21,16 @@ Sync API + admin UI. Connections (MySQL / Postgres / SQLite / Typesense / MongoD
 make setup                              # deps + .env files
 make api                                # backend :8080
 make frontend                           # Vite :5173 (proxies /api)
-make test                               # backend tests (needs CGO)
+make test                               # backend tests
 make test-frontend                      # Playwright (frontend/tests)
-make swagger                            # regenerate backend/docs/swagger.json only
 make lint                               # frontend oxlint
-make migrate-refresh                    # DESTRUCTIVE: drop all app tables + AutoMigrate
+make migrate-refresh                    # DESTRUCTIVE: drop all app tables and re-apply migrations
 make import-connections                 # upsert from backend/connections.json (see .example)
 make run-sync ID=1                      # run a sync job from the CLI (no API)
 make example-migrate && make example-seed
 ```
 
-No Docker in the default workflow — run locally with `go run` / Vite. App DB is created on migrate if missing (`DB_*` vars, never `DATABASE_URL`). Copy `backend/connections.json.example` → `backend/connections.json` (gitignored) to bootstrap connector credentials and optional sync jobs (fields/rules/relations) into the DB; optional `CONNECTIONS_FILE` overrides the path.
+No Docker in the default workflow — run locally with `npm run api` / Vite. App DB is created on migrate if missing (`DB_*` vars, never `DATABASE_URL`). Copy `backend/connections.json.example` → `backend/connections.json` (gitignored) to bootstrap connector credentials and optional sync jobs (fields/rules/relations) into the DB; optional `CONNECTIONS_FILE` overrides the path.
 
 ## Working style (non-negotiable)
 
@@ -41,10 +40,10 @@ These come from how this project is built day to day. Prefer them over “clever
 - **Readable over abstract.** Prefer clear neighboring patterns; avoid new frameworks/helpers unless necessary.
 - **DRY.** Do not copy the same logic across connectors, handlers, or pages — extract a small shared helper (or use a package) when repetition appears. Prefer one clear place over “almost the same” copies.
 - **Clear folders.** Keep concerns in the right place (`connectors/<name>/`, `services/sync/`, frontend `api/` + pages). Split oversized files when a second concern grows; do not invent deep package trees for cosmetics.
-- **GORM first.** Use the ORM for app DB reads/writes. Do not reach for raw SQL unless GORM cannot express it cleanly.
+- **Drizzle for the app database.** Use Drizzle for app DB reads/writes. Connector queries stay raw SQL — those tables belong to the user and are not known at compile time.
 - **No speculative features.** Do not add auto-refresh, request timeouts, or background intervals unless explicitly asked.
 - **Minimal API chatter.** Frontend schema/autocomplete calls only when necessary (cache / load once per connection).
-- **Match field/model order.** Trust struct/`gorm` column order in models; do not invent separate “order” metadata.
+- **Match field/model order.** Trust schema column order; do not invent separate “order” metadata.
 
 ## Conventions
 
@@ -55,8 +54,8 @@ These come from how this project is built day to day. Prefer them over “clever
 
 ### Connectors
 
-- Add sources/destinations under `backend/internal/connectors/<name>/`.
-- Register in `register.DefaultRegistry()`.
+- Add sources/destinations under `backend/src/connectors/<name>/`.
+- Register both in `defaultRegistry()` (`backend/src/connectors/registry.ts`).
 - Do **not** change `services/sync` orchestrator for a new connector type — implement the `SourceReader` / `DestinationWriter` interfaces.
 - See `SKILLS.md` → Extending connectors.
 
@@ -68,8 +67,8 @@ These come from how this project is built day to day. Prefer them over “clever
 
 ### API / DB
 
-- Swagger: update swag comments → `make swagger` → **JSON only** (`backend/docs/swagger.json`). UI at `/api/documentation`.
-- Status-like columns: store as tinyint/int in DB; map meanings in Go/JS constants — no DB enum constraints.
+- Schema changes: edit `src/db/schema.ts` (and `schema.sqlite.ts`) → `npm run db:generate` → commit the migrations under `src/db/migrations/`.
+- Status-like columns: store as int in DB; map meanings in TS/JS constants — no DB enum constraints.
 - Prefer ON DELETE CASCADE (or equivalent) for parent→child rows (e.g. sync job → sync logs) so deletes work without manual cleanup.
 - Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR`, optional `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` (explore Ask AI).
 
@@ -92,5 +91,5 @@ These come from how this project is built day to day. Prefer them over “clever
 ## When unsure
 
 1. Prefer the simple path used in neighboring files.
-2. Prefer GORM + existing connector interfaces.
-3. Ask before adding infra (Docker, new services, polling, raw SQL, extra migrations for cosmetics).
+2. Prefer Drizzle and the existing connector interfaces.
+3. Ask before adding infra (Docker, new services, polling, raw SQL for the app database, extra migrations for cosmetics).

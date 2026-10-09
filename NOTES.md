@@ -4,7 +4,7 @@ Short gotchas for agents. Prefer `AGENTS.md` / `SKILLS.md` for full rules. Updat
 
 ## Stack
 
-- Backend: Go (Gin + GORM). Frontend: React + Vite + Tailwind.
+- Backend: Node (Express + Drizzle). Frontend: React + Vite + Tailwind.
 - No Docker by default — `make api` / `make frontend` locally.
 - App DB env is `DB_*` only — never `DATABASE_URL`.
 

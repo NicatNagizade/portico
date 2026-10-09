@@ -2,7 +2,7 @@
 
 Task playbooks for common work on this repo. Read `AGENTS.md` for project rules; use this file when doing a concrete change.
 
-**Default rule for every skill:** keep it simple. Smallest readable change. No speculative timeouts, polling, extra tables, or raw SQL when GORM works.
+**Default rule for every skill:** keep it simple. Smallest readable change. No speculative timeouts, polling, extra tables, or raw SQL for the app database when Drizzle works.
 
 ---
 
@@ -10,10 +10,10 @@ Task playbooks for common work on this repo. Read `AGENTS.md` for project rules;
 
 **When:** adding, moving, or updating tests.
 
-- Backend: `backend/tests/` only (`make test` → `go test ./tests/...`).
+- Backend: `backend/tests/` only (`make test` → `npm test`).
 - Frontend: Playwright in `frontend/tests/` only (`make test-frontend` → `npm test`).
-- Never put `*_test.go` / test files next to source packages.
-- Prefer extending existing API tests in `backend/tests/api_test.go` over new frameworks.
+- Never put test files next to source.
+- Prefer extending existing API tests in `backend/tests/api.test.ts` over new frameworks.
 - After API shape changes, cover the happy path and one failure case if cheap.
 - First-time Playwright browsers: `cd frontend && npx playwright install chromium`.
 
@@ -23,15 +23,15 @@ Task playbooks for common work on this repo. Read `AGENTS.md` for project rules;
 
 **When:** new source/destination, or changing ListTables / Schema / Read / Write behavior.
 
-1. Implement under `backend/internal/connectors/<name>/`.
-2. Satisfy `SourceReader` and `DestinationWriter` in `connectors/connectors.go` (prefer both so the type is bidirectional). Implement `DestinationReader.Query` on the destination for explore.
-3. Register source and destination in `register.DefaultRegistry()`.
+1. Implement under `backend/src/connectors/<name>/` (`source.ts`, `destination.ts`).
+2. Satisfy `SourceReader` and `DestinationWriter` in `connectors/types.ts` (prefer both so the type is bidirectional). Implement destination query for explore.
+3. Register source and destination in `defaultRegistry()` (`connectors/registry.ts`).
 4. Do **not** edit `services/sync` orchestrator for a new type — the registry is the extension point.
 5. Destination `Prepare`/`WriteBatch`: treat sync job `config` as opaque JSON; apply defaults when keys are missing.
 6. Coerce field values to the declared destination type before write (e.g. stringify when type is string).
-7. Update swagger comments + `make swagger` if HTTP surface changes; add/adjust tests under `backend/tests`.
+7. Add/adjust tests under `backend/tests`.
 
-New connectors land the same way — package under `connectors/<name>/` + registry entries for source and destination. Document stores can reuse `connectors/docutil` for in-memory filters.
+New connectors land the same way — folder under `connectors/<name>/` + registry entries for source and destination. Document stores can reuse `connectors/shared` for in-memory filters.
 
 ---
 
@@ -73,16 +73,15 @@ Field order in models: `rows_total` before `rows_synced` — trust the model, do
 
 ---
 
-## API, swagger, env, DB
+## API, env, DB
 
 **When:** handlers, migrations, env, docs.
 
 - Env: `DB_DRIVER`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`, `APP_KEY`, `HTTP_ADDR` — never `DATABASE_URL`. Optional explore Ask AI: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` (OpenAI-compatible).
 - Create the app database on migrate if it does not exist.
-- Refresh schema (destructive): `make migrate-refresh` drops all app tables and re-runs AutoMigrate.
-- Status columns: int/tinyint in DB; constants in code — no DB enum constraints.
-- Prefer GORM for app DB access.
-- Swagger: swag comments → `make swagger` → **only** `backend/docs/swagger.json`. Docs UI: `/api/documentation`.
+- Refresh schema (destructive): `make migrate-refresh` drops all app tables and re-applies migrations.
+- Status columns: int in DB; constants in code — no DB enum constraints.
+- Prefer Drizzle for app DB access. After a schema change, `npm run db:generate` and commit both Postgres and SQLite migrations.
 - List endpoints that can grow (sync jobs, sync logs): support pagination end-to-end (API + UI).
 
 ---
@@ -92,7 +91,7 @@ Field order in models: `rows_total` before `rows_synced` — trust the model, do
 **When:** connection config, encryption helpers.
 
 - Seal passwords/API keys with `APP_KEY` (env only — never persist the key in the DB).
-- Keep `internal/secretbox` small; redact secrets in API JSON.
+- Keep `src/utils/secretbox.ts` small; redact secrets in API JSON.
 - Do not redesign encryption unless asked.
 
 ---

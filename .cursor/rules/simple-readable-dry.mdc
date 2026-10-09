@@ -15,7 +15,7 @@ When implementing anything in this repo:
 
 ```text
 ❌ Copy the same Query/normalize loop into MySQL and Postgres
-✅ One sqlutil helper both sources call
+✅ One shared SQL helper both sources call
 
 ❌ Huge page with useMemo/useCallback and unused UX
 ✅ Straight state + load function matching other pages
