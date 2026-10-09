@@ -1,9 +1,23 @@
 import { request } from './client'
 import { buildQuery, normalizePage } from './pagination'
 
-export function listSyncLogs({ syncJobId, page = 1, pageSize = 20 } = {}) {
+export function listSyncLogs({
+  syncJobId,
+  status,
+  from,
+  to,
+  page = 1,
+  pageSize = 20,
+} = {}) {
   return request(
-    `/sync-logs${buildQuery({ sync_job_id: syncJobId, page, page_size: pageSize })}`,
+    `/sync-logs${buildQuery({
+      sync_job_id: syncJobId,
+      status,
+      from,
+      to,
+      page,
+      page_size: pageSize,
+    })}`,
     { cache: 'no-store' },
   ).then(normalizePage)
 }

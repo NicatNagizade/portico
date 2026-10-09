@@ -1,0 +1,37 @@
+{
+  "name": "portico-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "api": "tsx src/index.ts",
+    "migrate": "tsx src/cli/migrate.ts",
+    "migrate:refresh": "tsx src/cli/migrate.ts refresh",
+    "import-connections": "tsx src/cli/import-connections.ts",
+    "run-sync": "tsx src/cli/run-sync.ts",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts && drizzle-kit generate --config drizzle.sqlite.config.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "csv-stringify": "^6.9.0",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^1.0.0-rc.4",
+    "express": "^5.1.0",
+    "ioredis": "^5.8.1",
+    "mongodb": "^6.20.0",
+    "mysql2": "^3.15.2",
+    "pg": "^8.16.3",
+    "typesense": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.7.2",
+    "@types/pg": "^8.15.5",
+    "drizzle-kit": "^1.0.0-rc.4",
+    "prettier": "^3.9.9",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

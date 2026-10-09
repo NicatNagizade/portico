@@ -4,15 +4,15 @@ Sync API and admin UI. Define **connections** (MySQL, Postgres, SQLite, Typesens
 
 | Path | Role |
 |------|------|
-| `backend/` | Go API (Gin + GORM) on `:8080` |
+| `backend/` | Node API (Express + Drizzle) on `:8080` |
 | `frontend/` | React admin UI (Vite + Tailwind) on `:5173` |
 | `exampleData/` | Seed Postgres/MySQL social graph for sync demos |
 | `backend/connections.json` | Optional bootstrap of connector credentials + sync jobs (gitignored) |
 
 ## Prerequisites
 
-- Go 1.22+
 - Node.js 20+
+- Go 1.22+ (example dataset only)
 - Local Postgres (app DB + example dataset)
 - Optional for full demos: Typesense (`:8108`), MongoDB (`:27017`), Redis (`:6379`)
 
@@ -34,8 +34,6 @@ make import-connections
 make api                   # http://localhost:8080
 make frontend              # http://localhost:5173 (proxies /api)
 ```
-
-Swagger UI: [http://localhost:8080/api/documentation](http://localhost:8080/api/documentation)
 
 ---
 
@@ -87,27 +85,27 @@ App metadata (connections, sync jobs, logs) lives in its **own** Postgres DB —
 | Variable | Default | Notes |
 |----------|---------|--------|
 | `HTTP_ADDR` | `:8080` | Listen address |
-| `DB_DRIVER` | `postgres` | App DB |
+| `DB_DRIVER` | `postgres` | App DB (`postgres` or `sqlite`) |
 | `DB_HOST` | `localhost` | |
 | `DB_PORT` | `5432` | |
 | `DB_USER` | `postgres` | |
 | `DB_PASSWORD` | `postgres` | |
-| `DB_NAME` | `portico` | Created on startup / migrate if missing |
+| `DB_NAME` | `portico` | Created on migrate if missing |
 | `DB_SSLMODE` | `disable` | |
 | `APP_KEY` | (see `.env.example`) | Encrypts connection passwords/API keys at rest. Set before creating connections; changing it later cannot decrypt existing rows. |
 | `OPENAI_API_KEY` | empty | Optional — Explore → Ask AI |
 | `OPENAI_BASE_URL` / `OPENAI_MODEL` | | Optional OpenAI-compatible LLM |
 
-`make setup` copies `.env.example` → `.env` and runs `go mod tidy`. On API start, the app creates `DB_NAME` if missing and auto-migrates.
+`make setup` copies `.env.example` → `.env` and runs `npm install`. On API start, the app creates `DB_NAME` if missing and applies Drizzle migrations.
 
 ### Run
 
 ```bash
 make api
-# or: cd backend && go run ./cmd/api
+# or: cd backend && npm run api
 ```
 
-Other useful targets: `make migrate-refresh` (DESTRUCTIVE: drop app tables + AutoMigrate), `make swagger`, `make test`.
+Other useful targets: `make migrate-refresh` (DESTRUCTIVE: drop app tables and re-apply migrations), `make test`.
 
 Full env/API notes: [backend/README.md](backend/README.md).
 
@@ -178,16 +176,15 @@ Production build: `make build` / `make preview`. Details: [frontend/README.md](f
 
 ```bash
 make setup                    # backend + frontend deps / .env
-make api                      # Go API :8080
+make api                      # API :8080
 make frontend                 # Vite :5173
 make import-connections       # upsert from backend/connections.json
 make run-sync ID=1            # run a sync job from the CLI
 make example-migrate && make example-seed
 make migrate-refresh          # DESTRUCTIVE: reset app DB schema
-make test                     # backend tests (needs CGO)
+make test                     # backend tests
 make test-frontend            # Playwright
-make swagger                  # regenerate backend/docs/swagger.json
 make lint                     # frontend oxlint
 ```
 
-No Docker in the default workflow — run services locally (`go run` / Vite) and point env / `connections.json` at them.
+No Docker in the default workflow — run services locally (`npm` / Vite) and point env / `connections.json` at them.

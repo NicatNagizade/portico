@@ -111,7 +111,16 @@ export default function ExploreFilters({
                         value={row.value}
                         onChange={(e) => updateRow(index, { value: e.target.value })}
                         placeholder={
-                          row.operator === 'in' || row.operator === 'not_in' ? 'a, b, c' : '123'
+                          row.operator === 'in' || row.operator === 'not_in'
+                            ? 'a, b, c'
+                            : row.operator === 'like'
+                              ? 'omar'
+                              : '123'
+                        }
+                        title={
+                          row.operator === 'like'
+                            ? 'Matches anywhere in the value. Add % to write your own pattern, for example %omar.'
+                            : undefined
                         }
                       />
                     ) : (
