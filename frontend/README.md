@@ -10,7 +10,6 @@ React admin UI for the Portico Sync API (connections, sync jobs, sync logs).
 ## Setup
 
 ```bash
-cd frontend
 cp .env.example .env
 npm install
 ```
@@ -28,6 +27,18 @@ Opens on the Vite default port (usually `http://localhost:5173`). API calls go t
 ```bash
 npm run build
 npm run preview
+```
+
+## Tests
+
+```bash
+npm test
+```
+
+## Lint
+
+```bash
+npm run lint
 ```
 
 ## Environment

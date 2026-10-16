@@ -12,13 +12,10 @@ npm run api
 
 Listens on `HTTP_ADDR` (default `:8080`). On startup, creates `DB_NAME` if missing and applies migrations in `src/db/migrations/`.
 
-From the repo root: `make api`, `make migrate-refresh`, `make import-connections`, `make run-sync ID=1`, `make test`.
-
 ### Run a sync job
 
 ```bash
-make run-sync ID=1
-# or: npm run run-sync -- 1
+npm run run-sync -- 1
 ```
 
 Runs the job in this process (same path as `POST /sync-jobs/{id}/run`) and prints the finished sync log. Ctrl+C stops it. Exit code is non-zero when the sync fails.
@@ -28,7 +25,7 @@ Runs the job in this process (same path as `POST /sync-jobs/{id}/run`) and print
 ```bash
 cp connections.json.example connections.json
 # edit secrets / jobs, then:
-make import-connections   # from repo root
+npm run import-connections
 ```
 
 Upserts connections by `(name, type)` and sync jobs by `name`. Jobs reference connections by name; nested `relations` (tree via `relations[]`) / `fields` / `rules` / `values` match the sync-job API. Override path with `CONNECTIONS_FILE`.
@@ -55,14 +52,13 @@ Upserts connections by `(name, type)` and sync jobs by `name`. Jobs reference co
 
 ```bash
 npm test
-# or: make test
 ```
 
 ## Schema
 
 The app database (connections, sync jobs, logs) goes through Drizzle. `openDb` applies `src/db/migrations/`. If those tables already exist and drizzle has no migration record, the current migrations are recorded as applied and are not run again. `npm run db:generate` writes a new Postgres and SQLite migration after a schema change. Connector queries stay raw SQL under `src/connectors/sql/`; those databases are the user's, and their tables are not known at compile time.
 
-`make migrate-refresh` drops all app tables and recreates the schema.
+`npm run migrate:refresh` drops all app tables and recreates the schema.
 
 ## Layout
 
