@@ -41,7 +41,6 @@ test("api end to end on sqlite", async (t) => {
     openAIAPIKey: "",
     openAIBaseURL: "",
     openAIModel: "",
-    envFile: "",
   });
   const server = createApp(db, defaultRegistry(), null).listen(0);
   t.after(async () => {

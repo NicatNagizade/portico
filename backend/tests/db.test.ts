@@ -110,6 +110,5 @@ function sqliteConfig(file: string): Config {
     openAIAPIKey: "",
     openAIBaseURL: "",
     openAIModel: "",
-    envFile: "",
   };
 }

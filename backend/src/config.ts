@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import dotenv from "dotenv";
 
 export type Config = {
@@ -14,21 +12,14 @@ export type Config = {
   openAIAPIKey: string;
   openAIBaseURL: string;
   openAIModel: string;
-  envFile: string;
 };
 
-function env(key: string, fallback: string): string {
-  const v = process.env[key];
-  return v != null && v !== "" ? v : fallback;
+function env(key: string, fallback = ""): string {
+  return process.env[key] || fallback;
 }
 
 export function loadConfig(): Config {
-  const local = path.resolve(".env");
-  let envFile = "";
-  if (fs.existsSync(local)) {
-    dotenv.config({ path: local });
-    envFile = local;
-  }
+  dotenv.config();
   return {
     httpAddr: env("HTTP_ADDR", ":8080"),
     dbDriver: env("DB_DRIVER", "postgres"),
@@ -38,21 +29,16 @@ export function loadConfig(): Config {
     dbPassword: env("DB_PASSWORD", "postgres"),
     dbName: env("DB_NAME", "portico"),
     dbSSLMode: env("DB_SSLMODE", "disable"),
-    openAIAPIKey: process.env.OPENAI_API_KEY ?? "",
-    openAIBaseURL: process.env.OPENAI_BASE_URL ?? "",
-    openAIModel: process.env.OPENAI_MODEL ?? "",
-    envFile,
+    openAIAPIKey: env("OPENAI_API_KEY"),
+    openAIBaseURL: env("OPENAI_BASE_URL"),
+    openAIModel: env("OPENAI_MODEL"),
   };
 }
 
 export function listenHostPort(addr: string): { host: string; port: number } {
   const raw = addr.trim();
-  if (raw.startsWith(":")) {
-    return { host: "0.0.0.0", port: Number(raw.slice(1)) };
-  }
+  if (raw.startsWith(":")) return { host: "0.0.0.0", port: Number(raw.slice(1)) };
   const idx = raw.lastIndexOf(":");
-  if (idx > 0) {
-    return { host: raw.slice(0, idx), port: Number(raw.slice(idx + 1)) };
-  }
+  if (idx > 0) return { host: raw.slice(0, idx), port: Number(raw.slice(idx + 1)) };
   return { host: "0.0.0.0", port: Number(raw) };
 }

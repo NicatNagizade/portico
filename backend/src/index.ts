@@ -17,7 +17,5 @@ const app = createApp(
 );
 const { host, port } = listenHostPort(cfg.httpAddr);
 app.listen(port, host, () => {
-  console.log(
-    `express api listening on ${cfg.httpAddr}${cfg.envFile ? ` (env ${cfg.envFile})` : ""}`,
-  );
+  console.log(`express api listening on ${cfg.httpAddr}`);
 });
